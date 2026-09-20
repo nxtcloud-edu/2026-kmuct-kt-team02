@@ -36,10 +36,17 @@ export function PageBackground() {
       aria-hidden="true"
       className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-canvas-100"
     >
-      <div className="absolute -right-32 -top-40 h-[30rem] w-[30rem] animate-float rounded-full bg-aurora-violet/16 blur-[100px]" />
-      <div className="absolute -left-40 top-1/3 h-[26rem] w-[26rem] animate-float-slow rounded-full bg-aurora-blue/14 blur-[100px]" />
-      <div className="absolute right-[10%] top-[14%] h-14 w-14 animate-float-slow rounded-full bg-gradient-to-br from-brand-300 to-brand-600 opacity-70" />
-      <div className="absolute left-[8%] top-[60%] h-8 w-8 animate-float rounded-full bg-gradient-to-br from-aurora-sky to-aurora-blue opacity-60" />
+      {/* 위쪽에서 은근히 번지는 빛 */}
+      <div className="absolute inset-x-0 top-0 h-[28rem] bg-gradient-to-b from-brand-100/60 via-canvas-100/40 to-transparent" />
+
+      <div className="absolute -right-28 -top-36 h-[32rem] w-[32rem] animate-float rounded-full bg-aurora-violet/25 blur-[110px]" />
+      <div className="absolute -left-36 top-1/4 h-[28rem] w-[28rem] animate-float-slow rounded-full bg-aurora-blue/22 blur-[110px]" />
+      <div className="absolute bottom-[-10rem] right-1/4 h-[26rem] w-[26rem] animate-float rounded-full bg-aurora-sky/18 blur-[120px]" />
+
+      {/* 작은 구체 장식 */}
+      <div className="absolute right-[9%] top-[13%] h-16 w-16 animate-float-slow rounded-full bg-gradient-to-br from-brand-300 to-brand-600 opacity-75 shadow-card" />
+      <div className="absolute left-[7%] top-[58%] h-9 w-9 animate-float rounded-full bg-gradient-to-br from-aurora-sky to-aurora-blue opacity-65" />
+      <div className="absolute left-[28%] top-[18%] h-5 w-5 animate-float rounded-full bg-gradient-to-br from-brand-200 to-brand-400 opacity-60" />
     </div>
   );
 }

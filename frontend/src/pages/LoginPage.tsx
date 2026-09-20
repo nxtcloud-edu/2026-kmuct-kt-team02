@@ -161,7 +161,7 @@ export function LoginPage() {
                 </button>
               </div>
 
-              <Button type="submit" size="lg" block loading={submitting}>
+              <Button variant="solid" type="submit" size="lg" block loading={submitting}>
                 로그인
               </Button>
             </form>

@@ -71,6 +71,24 @@ const config: Config = {
           "0 1px 2px rgba(31,37,71,0.05), 0 18px 38px -16px rgba(31,37,71,0.26)",
         panel: "0 1px 2px rgba(31,37,71,0.04), 0 24px 56px -22px rgba(31,37,71,0.24)",
         brand: "0 10px 24px -10px rgba(93,97,230,0.5)",
+        /**
+         * 위로 떠오른 느낌.
+         * 상단 안쪽 흰 선으로 모서리를 살리고, 그림자를 세 겹으로 겹쳐 거리감을 만든다.
+         */
+        lift: [
+          "inset 0 1px 0 0 rgba(255,255,255,0.9)",
+          "0 1px 2px rgba(31,37,71,0.05)",
+          "0 6px 14px -6px rgba(31,37,71,0.12)",
+          "0 20px 36px -14px rgba(31,37,71,0.20)",
+          "0 40px 64px -28px rgba(31,37,71,0.22)",
+        ].join(", "),
+        "lift-hover": [
+          "inset 0 1px 0 0 rgba(255,255,255,0.9)",
+          "0 1px 2px rgba(31,37,71,0.05)",
+          "0 10px 20px -8px rgba(31,37,71,0.14)",
+          "0 26px 44px -16px rgba(31,37,71,0.24)",
+          "0 52px 80px -32px rgba(31,37,71,0.26)",
+        ].join(", "),
       },
       backgroundImage: {
         "brand-gradient": "linear-gradient(135deg, #7C80F0 0%, #5B7BF5 52%, #52C6E8 100%)",
