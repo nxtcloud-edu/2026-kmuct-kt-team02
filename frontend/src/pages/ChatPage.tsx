@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, Search, Send, Sparkles, UserCheck } from "lucide-react";
+import {
+  Briefcase,
+  Bus,
+  ChevronDown,
+  Home,
+  Search,
+  Send,
+  Sparkles,
+  UserCheck,
+  Wallet,
+} from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, EmptyState } from "@/components/ui/Surface";
 import { LiveRegion } from "@/components/ui/LiveRegion";
@@ -91,7 +101,8 @@ function ChatView({ ready }: { ready: boolean }) {
       {/* 로그인 전 안내 */}
       {chat.guest && <GuestNotice loggedIn={Boolean(auth)} />}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+      {/* 대화창을 넓게 둬서 들어오자마자 눈에 들어오게 한다 */}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
         {/* 정책 카드 */}
         <section aria-label="찾은 제도" className="order-2 lg:order-1">
           <div className="mb-3 flex items-baseline justify-between gap-3">
@@ -166,11 +177,18 @@ function ChatView({ ready }: { ready: boolean }) {
         </section>
 
         {/* AI 대화 */}
-        <section
-          aria-label="AI 혜택 상담"
-          className="order-1 flex min-h-[34rem] flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-panel lg:order-2 lg:sticky lg:top-[5.5rem] lg:h-[calc(100vh-9rem)]"
-        >
-          <div className="flex items-center justify-between gap-3 border-b border-line-soft bg-canvas-50 px-5 py-4">
+        {/*
+          AI 대화창.
+          위쪽에만 색 띠를 두면 스티커처럼 보이므로, 바깥을 감싸는 얇은 그라데이션
+          테두리로 사방을 둘렀다. 떠오른 느낌은 그림자가 만든다.
+        */}
+        <div className="order-1 lg:order-2 lg:sticky lg:top-[5.5rem] lg:-translate-y-1">
+          <div className="rounded-[1.7rem] bg-gradient-to-br from-brand-300/80 via-brand-200/55 to-aurora-sky/50 p-[1.5px] shadow-lift transition-shadow duration-300 hover:shadow-lift-hover">
+            <section
+              aria-label="AI 혜택 상담"
+              className="flex min-h-[36rem] flex-col overflow-hidden rounded-[1.6rem] bg-white lg:h-[calc(100vh-9.5rem)]"
+            >
+          <div className="flex items-center justify-between gap-3 border-b border-line-soft bg-gradient-to-r from-brand-50/70 via-white to-canvas-50 px-5 py-4">
             <div className="flex items-center gap-3">
               <Logo variant="mark" size={30} />
               <div>
@@ -207,25 +225,7 @@ function ChatView({ ready }: { ready: boolean }) {
             className="scrollbar-slim flex-1 space-y-4 overflow-y-auto px-5 py-5"
           >
             {chat.turns.length === 0 && (
-              <div className="rounded-2xl border border-line-soft bg-canvas-50 p-4">
-                <p className="text-[0.9375rem] leading-relaxed text-ink-700">
-                  안녕하세요, 쏘다예요. 정책 이름을 몰라도 괜찮아요. 지금 상황이나 필요한
-                  걸 편하게 말해 주세요.
-                </p>
-                <ul className="mt-3 flex flex-wrap gap-2">
-                  {EXAMPLE_CHIPS.map((chip) => (
-                    <li key={chip}>
-                      <button
-                        type="button"
-                        onClick={() => chat.send(chip)}
-                        className="rounded-full border border-line bg-white px-3 py-1.5 text-left text-[0.875rem] font-medium text-ink-700 transition-colors hover:border-brand-300 hover:text-brand-700 focus-ring"
-                      >
-                        {chip}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              <WelcomePanel onPick={chat.send} />
             )}
 
             {chat.turns.map((turn, index) => {
@@ -324,7 +324,7 @@ function ChatView({ ready }: { ready: boolean }) {
             <label htmlFor="chat-input" className="sr-only">
               상담 내용 입력
             </label>
-            <div className="flex items-end gap-2 rounded-2xl border border-line bg-white p-2 transition-colors focus-within:border-brand-300">
+            <div className="flex items-end gap-2 rounded-2xl border border-line bg-white p-2 shadow-card transition-colors focus-within:border-brand-400">
               <textarea
                 id="chat-input"
                 rows={1}
@@ -354,10 +354,81 @@ function ChatView({ ready }: { ready: boolean }) {
               )}
             </p>
           </form>
-        </section>
+            </section>
+          </div>
+        </div>
       </div>
 
       <PolicyDetailPanel policy={selected} onClose={() => setSelected(null)} />
+    </div>
+  );
+}
+
+/** 예시 질문에 붙이는 아이콘. 분야를 바로 알아보게 한다 */
+const EXAMPLE_ITEMS = [
+  { text: EXAMPLE_CHIPS[0], icon: Wallet, tag: "생활비" },
+  { text: EXAMPLE_CHIPS[1], icon: Briefcase, tag: "취업·훈련" },
+  { text: EXAMPLE_CHIPS[2], icon: Home, tag: "주거" },
+  { text: EXAMPLE_CHIPS[3], icon: Bus, tag: "교통·문화" },
+] as const;
+
+/**
+ * 대화를 시작하기 전 화면.
+ * 빈 여백만 두면 밋밋해 보여서, 인사와 예시 질문을 카드로 채웠다.
+ */
+function WelcomePanel({ onPick }: { onPick: (text: string) => void }) {
+  return (
+    <div className="animate-fade-up">
+      <div className="flex flex-col items-center px-2 pt-2 text-center">
+        <span
+          aria-hidden="true"
+          className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-gradient shadow-brand"
+        >
+          <Sparkles className="h-7 w-7 text-white" />
+        </span>
+        <h2 className="mt-4 text-xl font-extrabold tracking-tight text-ink-900">
+          무엇을 찾아드릴까요?
+        </h2>
+        <p className="mt-2 max-w-sm text-[0.9375rem] leading-relaxed text-ink-600">
+          정책 이름을 몰라도 괜찮아요. 지금 상황이나 필요한 걸 편하게 말해 주세요.
+        </p>
+      </div>
+
+      <p className="mt-6 text-[0.875rem] font-bold text-ink-500">이렇게 물어보세요</p>
+
+      <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+        {EXAMPLE_ITEMS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <li key={item.text}>
+              <button
+                type="button"
+                onClick={() => onPick(item.text)}
+                className="group flex h-full w-full items-start gap-3 rounded-2xl border border-line bg-white p-3.5 text-left shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-card-hover focus-ring"
+              >
+                <span
+                  aria-hidden="true"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 transition-colors group-hover:bg-brand-100"
+                >
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[0.8125rem] font-bold text-brand-600">
+                    {item.tag}
+                  </span>
+                  <span className="mt-0.5 block text-[0.9375rem] font-medium leading-snug text-ink-800">
+                    {item.text}
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+
+      <p className="mt-4 rounded-xl border border-line-soft bg-canvas-50 px-3.5 py-2.5 text-[0.875rem] leading-relaxed text-ink-500">
+        모든 답변에 공고 원문 각주와 최종 확인일을 함께 보여드려요.
+      </p>
     </div>
   );
 }

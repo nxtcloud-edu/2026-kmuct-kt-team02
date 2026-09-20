@@ -7,7 +7,7 @@ import { cn } from "@/lib/cn";
 import { useApp } from "@/providers/AppProvider";
 
 const NAV_ITEMS = [
-  { to: "/", label: "AI 혜택 상담" },
+  { to: "/", label: "홈" },
   { to: "/policies", label: "정책 모아보기" },
   { to: "/mypage", label: "마이페이지" },
 ] as const;
@@ -25,8 +25,16 @@ export function AppHeader() {
       <div aria-hidden="true" className="h-1 w-full bg-brand-gradient" />
 
       <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-        <Link to="/" className="rounded-xl focus-ring" aria-label="쏘다 홈으로 이동">
+        <Link
+          to="/"
+          className="flex min-w-0 items-center gap-2.5 rounded-xl focus-ring"
+          aria-label="쏘다 홈으로 이동"
+        >
           <Logo size={32} />
+          {/* 브랜드 이름 옆 태그라인. 좁은 화면에서는 숨긴다 */}
+          <span className="hidden truncate border-l border-line pl-2.5 text-[0.8125rem] font-medium leading-tight text-ink-500 sm:block">
+            정확한 혜택을 찾아 쏜다
+          </span>
         </Link>
 
         <nav aria-label="주요 메뉴" className="hidden lg:block">
@@ -78,7 +86,9 @@ export function AppHeader() {
             </>
           ) : (
             <Link to="/login" className="rounded-xl focus-ring">
-              <Button size="sm">로그인</Button>
+              <Button variant="solid" size="sm">
+                로그인
+              </Button>
             </Link>
           )}
         </div>
@@ -139,7 +149,9 @@ export function AppHeader() {
               </div>
             ) : (
               <Link to="/login" className="block rounded-xl focus-ring">
-                <Button block>로그인</Button>
+                <Button variant="solid" block>
+                  로그인
+                </Button>
               </Link>
             )}
           </div>

@@ -2,7 +2,7 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
-type Variant = "primary" | "secondary" | "ghost" | "kakao";
+type Variant = "primary" | "solid" | "secondary" | "ghost" | "kakao";
 type Size = "sm" | "md" | "lg";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -17,6 +17,8 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 const VARIANTS: Record<Variant, string> = {
   primary:
     "bg-brand-gradient text-white shadow-brand hover:brightness-[1.04] disabled:hover:brightness-100",
+  /** 단색 강조 버튼. 그라데이션을 쓰지 않는다 */
+  solid: "bg-brand-600 text-white hover:bg-brand-700 disabled:hover:bg-brand-600",
   secondary:
     "border border-line bg-white text-ink-800 hover:border-line-strong hover:text-brand-700",
   ghost: "text-ink-600 hover:bg-canvas-200 hover:text-brand-700 disabled:hover:bg-transparent",
