@@ -358,12 +358,19 @@ def test_invalid_ai_json_is_downgraded_instead_of_trusted() -> None:
 
     events = parse_sse(post_chat(client, session_id).text)
     final_policy = payloads(events, "policies")[-1]["policies"][0]
-    ai_condition = final_policy["conditions"][-1]
 
+    # 판정을 신뢰하지 않은 결과가 상태에 나타나야 한다. 예외 조건 문장이 있는데 그것을
+    # 보지 못한 상태라 `likely` 로 갈 수 없다.
     assert final_policy["status"] == "check"
     assert final_policy["status_label"] == "확인이 필요해요"
-    assert ai_condition["result"] == "unknown"
-    assert ai_condition["source_url"].startswith("https://youth.seoul.go.kr/")
+
+    # 조건 목록에 `공고 확인 필요` 줄을 만들지 않는다. 판정을 못 한 것과 "공고를 봐야
+    # 한다"는 다르고, 규칙 조건이 제대로 붙은 정책에 정체 모를 줄이 하나 더 생겼다.
+    assert all(
+        item["needed_field"] != "공고 확인 필요" for item in final_policy["conditions"]
+    )
+    # AI 가 보낸 값은 어느 것도 통과하지 못한다.
+    assert all(item["judged_by"] == "rule" for item in final_policy["conditions"])
     assert "untrusted.example" not in json.dumps(events, ensure_ascii=False)
 
 

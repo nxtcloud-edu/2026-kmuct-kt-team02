@@ -79,6 +79,14 @@ class ExceptionJudgmentOutput(ContractModel):
 
     conditions: list[AIExceptionCondition] = Field(default_factory=list, max_length=20)
 
+    #: 예외 조건을 판정하지 못했는가. **AI 가 채우는 값이 아니라 서버가 붙이는 표시다.**
+    #:
+    #: 빈 조건 목록만으로는 "예외 조건이 없다"와 "판정을 못 했다"를 구분할 수 없다. 앞은
+    #: `likely` 로 가도 맞고 뒤는 안 된다. `merge_exception_judgment` 가 이 값을 보고
+    #: 상태를 `check` 로 막는다. `validate_ai_json` 이 모델 출력을 검증할 때는 이 키가
+    #: 오지 않으므로 기본값 False 가 쓰인다.
+    judgment_failed: bool = False
+
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -182,16 +190,24 @@ class JudgmentMergeResult(ContractModel):
 
 
 def unknown_exception_judgment() -> ExceptionJudgmentOutput:
-    return ExceptionJudgmentOutput(
-        conditions=[
-            AIExceptionCondition(
-                summary=_ASK_NOTICE,
-                result="미확인",
-                excerpt=None,
-                needed_field=_ASK_NOTICE,
-            )
-        ]
-    )
+    """예외 조건 판정을 못 했을 때 돌려줄 결과. **조건을 만들지 않는다.**
+
+    이전에는 `공고 확인 필요` 조건 한 건을 만들어 붙였다. 그게 카드 조건 목록에 그대로
+    나타나서, 규칙 기반 조건 6건이 제대로 붙은 정책에도 정체 모를 "공고 확인 필요" 줄이
+    하나 더 생겼다.
+
+    빈 목록으로 바꾼 근거. **판정을 못 한 것과 "공고를 봐야 한다"는 다르다.** 모델이
+    안 불렸을 뿐인데 사용자에게 공고를 확인하라고 말하면 근거 없는 안내다. 게이트웨이가
+    분당 요청 수 제한에 걸린 동안에는 모든 정책에 그 줄이 붙어서, 데이터가 부실한 정책과
+    구분되지 않았다.
+
+    잃는 것은 "예외 조건을 판정하지 못했다"는 표시다. 그건 사용자에게 알릴 값이 아니라
+    지표에 남길 값이고, 호출부가 로그로 남긴다. 화면에는 규칙 기반 조건이 그대로 남고,
+    모든 조건이 충족이면 그 판정은 예외 조건을 못 본 상태에서 나온 것이므로 상태 계산이
+    낙관적으로 기울 수 있다 — 그 위험은 `data_status` 배지와 고정 문구("최종 신청 전 공식
+    공고에서 다시 확인하세요")가 이미 덮는다.
+    """
+    return ExceptionJudgmentOutput(conditions=[], judgment_failed=True)
 
 
 def _needed_field(value: object) -> AskableProfileField | Literal["공고 확인 필요"] | None:
@@ -277,6 +293,18 @@ def merge_exception_judgment(
         next_footnote_id += 1
 
     status = _status_from_conditions(merged_conditions, policy.status)
+    if output.judgment_failed and status is EvaluationStatus.LIKELY:
+        # 예외 조건을 **판정하지 못했는데** 규칙 조건만으로 `likely` 가 되는 경우를 막는다.
+        #
+        # 이 정책에는 예외 조건 문장이 있고(호출부가 그때만 판정을 부른다) 그 문장을 아직
+        # 못 봤다. 그 상태에서 "신청 가능성이 높아요" 라고 말하면 사용자에게 될 것처럼
+        # 안내하는 것이고, 예외 조건이 실제로 걸리는 경우 그게 가장 나쁜 오류다
+        # (.kiro/steering/03-dev-method.md: 잘못된 단정은 안 된다고 잘못 말하는 것과 같은 급).
+        #
+        # 조건 목록에는 아무것도 추가하지 않는다. `공고 확인 필요` 줄을 넣었더니 규칙 조건이
+        # 제대로 붙은 정책에도 정체 모를 줄이 하나 더 생겼다. 상태만 한 칸 낮춰서
+        # "확인이 필요해요" 로 두면, 화면에는 조건 표와 고정 문구가 그대로 남는다.
+        status = EvaluationStatus.CHECK
     updated = PolicyEvaluation.model_validate(
         {
             **policy.model_dump(mode="json"),
