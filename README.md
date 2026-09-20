@@ -4,9 +4,16 @@
 
 ```
 ai/citation/   인용 검증. 발췌가 공고 원문에 실제로 있는지 대조 (AI B)
+ai/judgment/   예외 조건 판정 평가 케이스 J1~J8 과 채점기 (AI B)
 tests/         테스트
 docs/          역할별 설계서 전문
 .kiro/         steering 문서, hooks
+```
+
+평가 케이스 현황 보기:
+
+```bash
+python3 -m ai.judgment
 ```
 
 ## macOS · Windows 혼용 개발
