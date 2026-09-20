@@ -132,6 +132,29 @@ KIRO Spec 모드 요구사항 입력으로 쓴다. 전체 문서를 다 넣지 �
 - 이름, 연락처, 주민등록번호, 계좌번호를 받거나 저장하지 않는다.
 - 대표 프로필 정답셋을 AI A·B에게 공개하지 않는다. 이 저장소에 커밋하지 않는다. (`data/eval/` 참고)
 
+## 서버 실행
+
+```bash
+# 의존성 (가상환경 안에서)
+pip install -e '.[test]'
+
+# 기동. 정책 데이터와 모델 설정은 환경에서 읽는다
+python -m uvicorn server.main:app --reload --port 8000
+
+# 붙었는지 확인. policy_dependency 가 connected 여야 한다
+curl -s http://127.0.0.1:8000/health
+```
+
+모델 키는 `.env.example`을 참고해 `API_KEY`와 `LLM_MODEL`을 셸 환경에 넣는다. **키를 저장소에 커밋하지 않는다.**
+
+| 환경변수 | 없을 때 |
+| --- | --- |
+| `API_KEY`, `LLM_MODEL` | AI만 건너뛴다. 규칙 기반 카드는 그대로 나가고 `/chat`은 대체 문구로 끝까지 응답한다 |
+| `POLICIES_PATH` | `data/policies/policies.json`을 읽는다 |
+| `CORS_LOCALHOST_ORIGINS`, `CORS_S3_ORIGINS` | 기본 localhost 출처만 허용한다. 잘못된 값이면 **서버가 뜨지 않는다** (보안 설정이라 조용히 넘어가지 않는다) |
+
+정책 파일을 읽지 못하면 서버는 뜨지만 `/health`가 `unconnected`로 알리고 `/session`은 503이 된다. 기동 로그에 사유가 한 줄로 남는다. 조립 규칙은 `server/bootstrap.py`에 있다.
+
 ## 개발 환경 주의사항
 
 ### 이미 올라간 것

@@ -56,4 +56,20 @@ def create_app(
     return application
 
 
-app = create_app()
+def _create_default_app() -> FastAPI:
+    """환경에서 실제 의존성을 읽어 조립한다.
+
+    지연 import 다. `server.bootstrap` 이 위의 `create_app` 을 쓰기 때문에, 최상단에서
+    서로를 import 하면 순환이 된다.
+    """
+    from server.bootstrap import create_default_app
+
+    return create_default_app()
+
+
+#: `uvicorn server.main:app` 이 띄우는 앱.
+#:
+#: 여기가 오랫동안 `create_app()` 이었다. 의존성이 전부 None 으로 떠서 `/session` 은 503,
+#: `/health` 는 unconnected 로만 응답했다. 실제 값을 꽂는 곳이 테스트뿐이었다.
+#: 조립 규칙과 실패 처리는 `server/bootstrap.py` 에 있다.
+app = _create_default_app()
