@@ -379,16 +379,12 @@ class RepositoryDataTest(unittest.TestCase):
                 raw = next(p for p in policies if p["id"] == item["policy_id"])
                 self.assertFalse(raw.get("source_url") and raw.get("checked_at") and raw.get("raw_text"))
 
-    def test_검수_통과본은_대표_프로필에서_카드를_만든다(self):
-        """P4 를 뺀 네 프로필에서 기본 표시 카드가 하나 이상 나온다.
-
-        P4 는 소득 over_150 이라 승격된 정책에서 전부 unlikely 다. 대안 흐름 담당이다.
-        """
+    def test_검수_통과본은_대표_프로필_전부에서_카드를_만든다(self):
         policies, issues = loader.load_policies(
             self.root / "data" / "policies" / "policies.json"
         )
         self.assertEqual(issues, [])
-        self.assertGreaterEqual(len(policies), 4)
+        self.assertGreaterEqual(len(policies), 5)
 
         entries = json.loads(
             (self.root / "data" / "profiles" / "profiles.json").read_text(encoding="utf-8")
@@ -396,12 +392,47 @@ class RepositoryDataTest(unittest.TestCase):
         for entry in entries:
             with self.subTest(profile=entry["id"]):
                 result = rules.evaluate_policies(entry["profile"], policies, TODAY)
-                if entry["id"] == "P4":
-                    self.assertTrue(result["no_result"])
-                    self.assertGreaterEqual(result["hidden_unlikely_count"], 1)
-                else:
-                    self.assertFalse(result["no_result"])
-                    self.assertGreaterEqual(len(result["policies"]), 1)
+                self.assertFalse(result["no_result"])
+                self.assertGreaterEqual(len(result["policies"]), 1)
+
+    def test_소득_초과_프로필은_대안_흐름을_만든다(self):
+        """P4 는 소득 over_150 이라 소득 조건이 있는 정책이 unlikely 로 접힌다 (FR13)."""
+        policies, _ = loader.load_policies(
+            self.root / "data" / "policies" / "policies.json"
+        )
+        entries = json.loads(
+            (self.root / "data" / "profiles" / "profiles.json").read_text(encoding="utf-8")
+        )["profiles"]
+        p4 = next(entry["profile"] for entry in entries if entry["id"] == "P4")
+
+        result = rules.evaluate_policies(p4, policies, TODAY)
+        self.assertGreaterEqual(result["hidden_unlikely_count"], 1)
+        미충족 = [
+            condition["name"]
+            for card in result["hidden_unlikely"]
+            for condition in card["conditions"]
+            if condition["result"] == c.UNMET
+        ]
+        self.assertIn("가구 소득", 미충족)
+
+    def test_나이_하한_미달_프로필은_나이로_접힌다(self):
+        """P5 는 만 19세라 age_min 21 정책이 unmet 으로 접힌다."""
+        policies, _ = loader.load_policies(
+            self.root / "data" / "policies" / "policies.json"
+        )
+        entries = json.loads(
+            (self.root / "data" / "profiles" / "profiles.json").read_text(encoding="utf-8")
+        )["profiles"]
+        p5 = next(entry["profile"] for entry in entries if entry["id"] == "P5")
+
+        result = rules.evaluate_policies(p5, policies, TODAY)
+        미충족 = [
+            condition["name"]
+            for card in result["hidden_unlikely"]
+            for condition in card["conditions"]
+            if condition["result"] == c.UNMET
+        ]
+        self.assertIn("나이", 미충족)
 
     def test_마감된_청년수당은_기본_결과에서_빠진다(self):
         policies, _ = loader.load_policies(

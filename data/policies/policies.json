@@ -4,7 +4,7 @@
     "생성자": "백엔드A",
     "설명": "검수 통과 정책만 담는다. 서비스 추천에 쓰는 유일한 파일이다.",
     "기준_스키마": "server/schemas.py Policy",
-    "정책_수": 4,
+    "정책_수": 5,
     "승격_기준": "source_url·checked_at·raw_text·condition_sources 가 있고 Policy 계약을 통과하며 condition_sources 문장이 raw_text 안에 그대로 있는 정책",
     "미승격": "나머지는 data/policies/staging.json 에 남아 있다. 공고 원문이 필요하다.",
     "연결": "store, rule_engine = rules.repository.build(\"data/policies/policies.json\")"
@@ -45,6 +45,41 @@
         "age": "만19세~34세 (출생일이 1991년 5월 1일~2007년 5월 31일인 자)",
         "region": "서울에 거주하고 있는 만 19세~34세 미취업 또는 단기 근로 청년",
         "status": "미취업자만 신청가능 단, 주30시간 이하 또는 3개월 이하 단기근로자 신청 가능"
+      }
+    },
+    {
+      "id": "SEOUL-005",
+      "title": "긴급생활안정자금 이자지원 사업",
+      "agency": "서울특별시 미래청년기획관",
+      "categories": [
+        "living"
+      ],
+      "source_url": "https://youth.seoul.go.kr/infoData/plcyInfo/view.do?key=2309150002&plcyBizId=V202500054",
+      "apply_url": "https://www.ccrs.or.kr/main.do",
+      "checked_at": "2026-09-20",
+      "fetched_at": null,
+      "source_kind": "manual",
+      "data_status": "verified",
+      "apply_start": null,
+      "apply_end": null,
+      "age_min": 19,
+      "age_max": 39,
+      "regions": [
+        "서울"
+      ],
+      "statuses": [],
+      "income_max_pct": null,
+      "extra_conditions": [],
+      "exceptions_text": "추가단서 사항 채무조정, 개인회생자 중 성실 상환자 및 완제자 (※자세한 사항은 신용회복위원회 문의 必)",
+      "benefit": "1인당 최대 15백만원 내 긴급자금(의료비, 긴급생활비 등) 대출(연금리 3%, 대출지원기간 최대 60개월)",
+      "documents": [],
+      "steps": [
+        "자세한 방법은 신용회복위원회 홈페이지 또는 콜센터(☎ 1600-5500) 확인"
+      ],
+      "raw_text": "긴급생활안정자금 이자지원 사업\n정책 유형 복지.문화\n주관 기관 서울특별시 미래청년기획관\n정책 소개 부채 문제 경감 지원으로 청년들의 경제적 자립 및 건전한 신용회복 도모\n지원 내용 서울시-신용회복위원회-신한은행 협약에 의하여 신용회복위원회에서 소액금융 대출제도(서울특별시 한강론) 운영\n1인당 최대 15백만원 내 긴급자금(의료비, 긴급생활비 등) 대출(연금리 3%, 대출지원기간 최대 60개월)\n사업운영기간 2012년 ~ (계속)\n사업신청기간 2012년 ~ (계속)\n신청자격\n연령 주민등록상 서울시 거주 만19세 ~39세\n추가단서 사항 채무조정, 개인회생자 중 성실 상환자 및 완제자 (※자세한 사항은 신용회복위원회 문의 必)\n신청방법\n신청절차 자세한 방법은 신용회복위원회 홈페이지 또는 콜센터(☎ 1600-5500) 확인\n(신용회복위원회 > 소액금융 > 소액금융지원 소개 > 대출종류 > 서울특별시 한강론)\n기타사항 신청 대상여부는 신용회복위원회 콜센터(☎ 1600-5500) 문의하여 확인\n운영기관 서울시 미래청년기획관",
+      "condition_sources": {
+        "age": "연령 주민등록상 서울시 거주 만19세 ~39세",
+        "region": "연령 주민등록상 서울시 거주 만19세 ~39세"
       }
     },
     {
