@@ -37,7 +37,7 @@ from __future__ import annotations
 import json
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ai.judgment.values import (
     ALLOWED_NEEDED_FIELDS,
@@ -631,6 +631,27 @@ class ParseOutcome:
         return self.error is None
 
 
+def conditions_from_data(data: Any) -> ParseOutcome:
+    """이미 해석된 값에서 조건 목록을 꺼낸다.
+
+    `ai/conversation/llm.py` 의 어댑터는 파싱까지 끝내고 `StructuredResponse.data`
+    (매핑)를 돌려준다. 그 경로에서는 문자열 파싱이 필요 없으므로 항목 정규화만 한다.
+
+    문자열을 받으면 `parse_conditions()` 로 넘긴다. 어댑터가 스키마 강제를 걸지
+    못해 본문 문자열을 그대로 준 경우까지 같은 함수로 다룰 수 있게 한 것이다.
+
+    항목 단위 구제와 실패 사유 코드는 `parse_conditions()` 와 같다.
+    """
+    if isinstance(data, str):
+        return parse_conditions(data)
+
+    items = _as_item_list(data)
+    if items is None:
+        return ParseOutcome(error=ERROR_UNEXPECTED_SHAPE)
+
+    return _normalize_items(items)
+
+
 def parse_conditions(text: str) -> ParseOutcome:
     """모델 출력에서 조건 목록을 꺼낸다.
 
@@ -652,6 +673,11 @@ def parse_conditions(text: str) -> ParseOutcome:
     if items is None:
         return ParseOutcome(error=error)
 
+    return _normalize_items(items)
+
+
+def _normalize_items(items: Sequence[Any]) -> ParseOutcome:
+    """조건 항목들을 표준 형식으로 맞춘다. 항목 단위로 구제한다."""
     conditions: List[Dict[str, Any]] = []
     dropped: List[Dict[str, Any]] = []
 
