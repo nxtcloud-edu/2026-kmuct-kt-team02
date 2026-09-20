@@ -454,6 +454,77 @@ class RepositoryDataTest(unittest.TestCase):
             {item["field"] for item in result["unknown_items"]}, {"income_bracket"}
         )
 
+    def test_후속_질문에_답하면_카드_상태가_바뀐다(self):
+        """데모 5단계. P2 의 청년월세지원이 check 에서 likely 로 간다.
+
+        판정이 바뀌는 정보만 묻는다는 P0 규칙이 실제로 성립하는지 보는 케이스다.
+        """
+        policies, _ = loader.load_policies(
+            self.root / "data" / "policies" / "policies.json"
+        )
+        entries = json.loads(
+            (self.root / "data" / "profiles" / "profiles.json").read_text(encoding="utf-8")
+        )["profiles"]
+        p2 = next(entry["profile"] for entry in entries if entry["id"] == "P2")
+
+        before = rules.evaluate_policies(p2, policies, TODAY)
+        card = next(
+            item for item in before["policies"] if item["policy_id"] == "SEOUL-012"
+        )
+        self.assertEqual(card["status"], c.CHECK)
+        물을_항목 = [
+            item["field"] for item in before["unknown_items"] if item["policy_id"] == "SEOUL-012"
+        ]
+        self.assertEqual(물을_항목, ["other_benefit"])
+
+        answered = {**p2, "other_benefit": "no"}
+        after = rules.evaluate_policies(answered, policies, TODAY)
+        card = next(
+            item for item in after["policies"] if item["policy_id"] == "SEOUL-012"
+        )
+        self.assertEqual(card["status"], c.LIKELY)
+        self.assertEqual(
+            [item for item in after["unknown_items"] if item["policy_id"] == "SEOUL-012"], []
+        )
+
+    def test_건너뛰면_미확인으로_남는다(self):
+        """FR05. 건너뛴 항목은 미확인으로 유지된다."""
+        policies, _ = loader.load_policies(
+            self.root / "data" / "policies" / "policies.json"
+        )
+        entries = json.loads(
+            (self.root / "data" / "profiles" / "profiles.json").read_text(encoding="utf-8")
+        )["profiles"]
+        p2 = next(entry["profile"] for entry in entries if entry["id"] == "P2")
+
+        result = rules.evaluate_policies(p2, policies, TODAY)
+        card = next(
+            item for item in result["policies"] if item["policy_id"] == "SEOUL-012"
+        )
+        self.assertEqual(card["status"], c.CHECK)
+
+    def test_추가_항목이_다르면_접힌다(self):
+        """전세 거주자에게 월세 전용 정책은 unmet 이다."""
+        policies, _ = loader.load_policies(
+            self.root / "data" / "policies" / "policies.json"
+        )
+        entries = json.loads(
+            (self.root / "data" / "profiles" / "profiles.json").read_text(encoding="utf-8")
+        )["profiles"]
+        p2 = next(entry["profile"] for entry in entries if entry["id"] == "P2")
+
+        전세 = {**p2, "housing_type": "jeonse", "other_benefit": "no"}
+        result = rules.evaluate_policies(전세, policies, TODAY)
+        card = next(
+            item for item in result["hidden_unlikely"] if item["policy_id"] == "SEOUL-012"
+        )
+        미충족 = [
+            condition["name"]
+            for condition in card["conditions"]
+            if condition["result"] == c.UNMET
+        ]
+        self.assertEqual(미충족, ["주거 형태"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@
     "생성자": "백엔드A",
     "설명": "검수 통과 정책만 담는다. 서비스 추천에 쓰는 유일한 파일이다.",
     "기준_스키마": "server/schemas.py Policy",
-    "정책_수": 5,
+    "정책_수": 6,
     "승격_기준": "source_url·checked_at·raw_text·condition_sources 가 있고 Policy 계약을 통과하며 condition_sources 문장이 raw_text 안에 그대로 있는 정책",
     "미승격": "나머지는 data/policies/staging.json 에 남아 있다. 공고 원문이 필요하다.",
     "연결": "store, rule_engine = rules.repository.build(\"data/policies/policies.json\")"
@@ -188,6 +188,49 @@
         "age": "연령요건 : 21세~24세 청년(2002~2005년생)",
         "region": "주거요건 : 신청일 기준 서울특별시 거주(주민등록 및 외국인등록대장 기준)",
         "income": "소득요건 : 신청 시 건강보험료 (본인부담금 기준 중위소득 150% 이하)"
+      }
+    },
+    {
+      "id": "SEOUL-012",
+      "title": "청년월세지원",
+      "agency": "서울특별시",
+      "categories": [
+        "housing"
+      ],
+      "source_url": "https://housing.seoul.go.kr/site/main/content/sh01_060513",
+      "apply_url": null,
+      "checked_at": "2026-09-20",
+      "fetched_at": null,
+      "source_kind": "manual",
+      "data_status": "verified",
+      "apply_start": "2026-05-06",
+      "apply_end": "2026-12-31",
+      "age_min": 19,
+      "age_max": 39,
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
+      "income_max_pct": 150,
+      "extra_conditions": [
+        "주거 형태: 월세",
+        "다른 지원 수혜 중: 없음"
+      ],
+      "exceptions_text": "임차보증금 8천만원 이하 및 월세 60만원이하 건물에 월세로 거주 / 기준 중위소득 48% 초과 ~ 150% 이하 무주택자 / ※ 군 복무기간을 고려해 최대 3살까지 지원 연령 상한 연장 / ※ '26년 이전 서울시 청년월세지원 기 선정(수급)자, 국토교통부 청년월세 한시 특별지원금을 수혜중인 사람 및 자치구 청년월세 지원금을 수혜중인 사람은 지원 불가",
+      "benefit": "월 최대 20만원 월세 지원 (12개월 / 240만원), 생애 1회",
+      "documents": [],
+      "steps": [],
+      "raw_text": "01 지원대상\n신청일 기준 주민등록등본상 서울시에 거주하는 청년\n신청연도 기준 19세 이상 ~ 39세 이하 청년(1986.1.1. ~ 2007.12.31.)\n임차보증금 8천만원 이하 및 월세 60만원이하 건물에 월세로 거주\n기준 중위소득 48% 초과 ~ 150% 이하 무주택자\n※ 군 복무기간을 고려해 최대 3살까지 지원 연령 상한 연장\n※ '26년 이전 서울시 청년월세지원 기 선정(수급)자, 국토교통부 청년월세 한시 특별지원금을 수혜중인 사람 및 자치구 청년월세 지원금을 수혜중인 사람은 지원 불가\n02 지원내용\n월 최대 20만원 월세 지원 (12개월 / 240만원)\n생애 1회\n04 신청기간\n2026. 5. 6.(수) 10:00 ~ 12.31.(화) 18:00 마감",
+      "condition_sources": {
+        "age": "신청연도 기준 19세 이상 ~ 39세 이하 청년(1986.1.1. ~ 2007.12.31.)",
+        "region": "신청일 기준 주민등록등본상 서울시에 거주하는 청년",
+        "income": "기준 중위소득 48% 초과 ~ 150% 이하 무주택자"
       }
     }
   ]
