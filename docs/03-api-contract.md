@@ -9,6 +9,7 @@
 
 | 방식 | 경로 | 설명 | 시간 목표 |
 | --- | --- | --- | --- |
+| GET | `/health` | 서버와 외부 의존성 연결 상태 점검 | 즉시 |
 | POST | `/session` | 온보딩 폼 제출. 세션 번호와 규칙 기반 1차 결과 | 1초 이내 |
 | POST | `/chat` | 메시지 또는 후속 질문 답변. 스트리밍 응답 | 첫 이벤트 즉시, 전체 20초 상한 |
 | GET | `/policies/{id}` | 정책 상세 + 현재 세션 기준 판정 결과 | 1초 이내 |
@@ -16,18 +17,32 @@
 
 인증 없음. 세션 번호로만 식별한다. 개인 식별 정보를 받지 않으므로 로그인 개념이 없다.
 
+### 1-1. GET /health
+
+운영 점검 응답은 아래 상태만 반환한다. 자격 증명, 환경 변수 원문, LLM 공급자·모델명은 반환하지 않는다.
+
+| 필드 | 내용 |
+| --- | --- |
+| `status` | 서버가 요청을 처리하면 `ok` |
+| `verified_policy_count` | 연결된 정책 공급자의 검수 완료 정책 수. 미연결이면 `null` |
+| `policy_dependency` | `connected` 또는 `unconnected` |
+| `llm_adapter_configured` | LLM adapter가 설정됐는지 여부만 표시하는 boolean |
+
+정책 공급자가 아직 연결되지 않았어도 `/health` 자체는 200을 반환하고 `policy_dependency=unconnected`로 명시한다.
+
 ## 2. POST /session
 
-**받는 것** — 기본 프로필 5개 항목
+**받는 것** — 서울 거주를 전제로 한 온보딩 입력. `region`은 요청에서 받지 않고 서버 내부 Profile에 `seoul`로 고정한다.
 
 | 필드 | 필수 | 허용 값 |
 | --- | --- | --- |
 | `age` | 필수 | 15~39 정수 |
-| `region` | 필수 | `seoul`, `outside_seoul` |
 | `district` | 선택 | 자치구명 또는 비움 |
 | `status` | 필수 | `enrolled`, `on_leave`, `final_semester`, `job_seeking`, `employed` |
 | `categories` | 필수 | `scholarship`, `living`, `job`, `culture`, `housing`, `all` 중 하나 이상 |
 | `income_bracket` | 선택 | `under_50`, `50_100`, `100_150`, `over_150`, `unknown` (기본값 `unknown`) |
+
+클라이언트가 `region`을 보내면 계약에 없는 필드로 입력 오류를 반환한다. 응답의 정리된 `profile`에는 항상 `region: "seoul"`이 들어간다.
 
 **돌려주는 것**
 
@@ -43,19 +58,20 @@
 
 ## 3. POST /chat
 
-**받는 것** — 세 경우 중 하나
+**받는 것**
 
-| 경우 | 보내는 것 |
-| --- | --- |
-| 자유 메시지 | `session_id`, `message` |
-| 후속 질문 답변 | `session_id`, 답변 항목 이름(`field`), 답변 값(`value`) |
-| 후속 질문 건너뛰기 | `session_id`, 답변 항목 이름(`field`), 건너뜀 표시 |
+| 필드 | 필수 | 내용 |
+| --- | --- | --- |
+| `session_id` | 필수 | `/session`에서 발급받은 세션 UUID |
+| `message` | 필수 | 비어 있지 않은 사용자 메시지 |
+| `client_message_id` | 필수 | 프론트가 메시지별로 부여한 식별자 |
 
-후속 질문 답변이 들어오면 메시지 해석(AI A) 단계를 건너뛰고 값을 바로 프로필에 넣는다.
+서버는 세션 존재·만료를 스트림을 열기 전에 확인한다. 세션이 없거나 만료됐으면 SSE가 아닌 공통 오류 JSON과 HTTP 404를 반환한다.
+메시지는 PII 마스킹을 거친 값만 내부 Chat pipeline에 전달하며 원문은 세션이나 로그에 저장하지 않는다.
 
 **돌려주는 것**: 스트리밍 이벤트. 5장.
 
-**검증**: 세션 없음 → 세션 만료 오류. 메시지와 답변이 둘 다 없음 → 입력 오류
+**검증**: 세 필드 누락 또는 빈 문자열 → 입력 오류. 세션 없음·만료 → `session_expired` 404.
 
 ## 4. 정책 판정 결과 항목
 
@@ -113,20 +129,32 @@
 
 ## 5. 스트리밍 이벤트
 
-| 이벤트 | 언제 | 담는 것 | 프론트 반응 |
+응답은 `text/event-stream`이며 각 SSE의 `data`는 다음 공통 envelope를 쓴다.
+
+```json
+{"request_id":"UUID","seq":1,"payload":{}}
+```
+
+- `request_id`는 서버가 요청마다 만든 UUID이며 한 스트림 안에서 동일하다.
+- `seq`는 1부터 시작해 이벤트마다 1씩 증가한다.
+- `payload`만 이벤트별 모델을 따른다.
+
+| 이벤트 | 언제 | `payload` 내용 | 프론트 반응 |
 | --- | --- | --- | --- |
 | `status` | 단계가 바뀔 때 | 진행 단계 (`searching`, `checking`, `summarizing`) | 진행 단계 표시 갱신 |
 | `profile_update` | 프로필이 바뀔 때 | 바뀐 항목과 값, 안내 문구, 갱신된 프로필 | 프로필 바 갱신 + 대화에 안내 한 줄 |
-| `policies` | 규칙 결과 직후, AI 판정 후 한 번 더 | 정책 판정 결과 목록, 접힌 `unlikely` 개수 | 카드 갱신. 기존 카드는 자리 유지하고 상태만 바꿈, 새 카드는 뒤에 추가 |
+| `policies` | 규칙 결과 직후 | 정책 판정 결과 목록, 접힌 `unlikely` 개수 | AI 설명보다 먼저 카드 갱신 |
 | `answer_delta` | 답변 생성 중 반복 | 답변 조각 (문장 단위) | 답변 본문에 이어 붙임 |
 | `footnotes` | 답변 완료 시 | 각주 번호, 정책 번호, 발췌, 기관, 확인일, 원문 주소 | 각주 번호를 발췌와 연결 |
 | `followup` | 물을 것이 있을 때 | 6장 | 후속 질문 카드 표시 |
 | `related` | P1 | 관련 질문 칩 문구 최대 3개 | 칩 표시 |
-| `error` | 부분 실패 | 오류 코드와 사용자 문구 | 카드 유지 + 오류 문구 + 다시 시도 버튼 |
-| `done` | 종료 | 총 소요 시간 | 진행 단계 숨김, 입력창 활성 |
+| `done` | 정상 또는 복구 가능한 fallback 종료 | 총 소요 시간 | 진행 단계 숨김, 입력창 활성 |
 
-- 답변 생성 중 입력창은 비활성. 후속 질문 버튼은 `done` 이후에만 누를 수 있다.
-- `error`가 와도 `done`은 반드시 보낸다.
+기본 순서는 `status → profile_update(선택) → policies → status → answer_delta(반복) → footnotes → followup(선택) → related(선택) → done`이다.
+`policies`는 첫 `answer_delta`보다 반드시 먼저 보내고, 정상 또는 복구 가능한 fallback은 `done`으로 끝낸다.
+
+응답에 `Cache-Control: no-cache`를 넣고, Nginx 계열 프록시 환경의 버퍼링 방지를 위해 `X-Accel-Buffering: no`를 함께 보낸다.
+클라이언트 연결이 끊기면 현재 pipeline task를 취소하고 남은 이벤트를 만들지 않는다.
 
 ## 6. 후속 질문에 담기는 것
 
@@ -171,7 +199,7 @@
 **실패 처리**
 
 - 7단계에서 시간을 넘긴 정책은 예외 조건을 전부 `unknown`으로 두고 진행한다.
-- 10단계가 실패하면 `error`를 보내고 카드는 유지한다.
+- 10단계가 실패했지만 복구 가능한 경우 고정 fallback 설명을 `answer_delta`로 보내고 `done`으로 종료한다.
 - 전체 20초를 넘기면 그때까지의 결과로 `done`을 보낸다.
 - **AI가 전부 실패해도 5단계의 규칙 기반 카드는 이미 화면에 있다.**
 
