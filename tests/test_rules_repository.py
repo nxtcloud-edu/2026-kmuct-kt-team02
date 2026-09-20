@@ -116,12 +116,20 @@ class PolicyStoreTest(AdapterTestCase):
         )
         self.assertEqual(store.count_verified(), 1)
 
-    def test_저장소의_미검수_데이터는_검수_완료가_0건이다(self):
+    def test_원문이_없는_staging_행은_계약을_통과하지_못한다(self):
         root = Path(__file__).resolve().parents[1]
         store = repository.PolicyStore(root / "data" / "policies" / "staging.json")
         self.assertEqual(len(store), 27)
-        self.assertEqual(store.count_verified(), 0)
-        self.assertIsNone(store.get("SEOUL-004"))
+        # 아직 공고 원문을 채우지 않은 정책은 source_url 이 비어 Policy 로 만들 수 없다.
+        self.assertIsNone(store.get("GOV-001"))
+
+    def test_승격본은_검수_완료로_집계된다(self):
+        root = Path(__file__).resolve().parents[1]
+        store = repository.PolicyStore(root / "data" / "policies" / "policies.json")
+        self.assertGreaterEqual(len(store), 4)
+        # 마감된 청년수당은 data_status 가 closed 라 검수 완료 집계에서 빠진다.
+        self.assertEqual(store.count_verified(), len(store) - 1)
+        self.assertIsNotNone(store.get("GOV-006"))
 
 
 class RuleEngineAdapterTest(AdapterTestCase):

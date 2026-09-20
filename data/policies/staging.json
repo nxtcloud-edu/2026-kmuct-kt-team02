@@ -25,23 +25,64 @@
     ],
     "확인_필요": {
       "기간_모집이나_날짜_미확인": [
-        "GOV-001", "GOV-002", "SEOUL-001", "SEOUL-002", "SEOUL-003", "SEOUL-004",
-        "SEOUL-006", "SEOUL-007", "SEOUL-009", "SEOUL-010", "SEOUL-012", "SEOUL-013",
-        "GOV-008", "GOV-009", "GOV-010", "GOV-011"
+        "GOV-001",
+        "GOV-002",
+        "SEOUL-001",
+        "SEOUL-002",
+        "SEOUL-003",
+        "SEOUL-004",
+        "SEOUL-006",
+        "SEOUL-007",
+        "SEOUL-009",
+        "SEOUL-010",
+        "SEOUL-012",
+        "SEOUL-013",
+        "GOV-008",
+        "GOV-009",
+        "GOV-010",
+        "GOV-011"
       ],
       "날짜_미확인_주의": "apply_end가 null이면 규칙 엔진이 '상시 접수'로 판정한다. 위 16건은 기간 모집이므로 날짜를 채우기 전에 승격하면 잘못된 배지가 뜬다.",
       "exceptions_text_필수": {
-        "대상": ["GOV-001", "GOV-002", "SEOUL-013", "SEOUL-014", "SEOUL-015", "GOV-012"],
+        "대상": [
+          "GOV-001",
+          "GOV-002",
+          "SEOUL-013",
+          "SEOUL-014",
+          "SEOUL-015",
+          "GOV-012"
+        ],
         "이유": "소득 기준이 기준 중위소득 %가 아니어서 income_max_pct를 비웠다. exceptions_text가 비면 소득 조건이 아예 사라져 소득 초과자에게 likely가 뜬다. 원문 문장을 반드시 채워야 한다."
       },
-      "agency_미확인": ["GOV-008", "GOV-009", "GOV-010", "GOV-011"],
+      "agency_미확인": [
+        "GOV-008",
+        "GOV-009",
+        "GOV-010",
+        "GOV-011"
+      ],
       "statuses_보수적_설정": {
-        "대상": ["GOV-001", "GOV-002", "GOV-008", "GOV-009", "GOV-010", "GOV-011"],
+        "대상": [
+          "GOV-001",
+          "GOV-002",
+          "GOV-008",
+          "GOV-009",
+          "GOV-010",
+          "GOV-011"
+        ],
         "이유": "원 목록이 '대학생' 또는 '제한 없음/대학생/구직자'로 모호했다. 과대 포함은 잘못된 met을 만들므로 좁게 잡았다. 원문 확인 후 조정하고, 휴학 포함 여부가 불분명한 문장은 exceptions_text로 옮긴다."
       },
       "상시_접수_11건": [
-        "GOV-003", "GOV-004", "GOV-005", "GOV-006", "GOV-007", "GOV-012",
-        "SEOUL-005", "SEOUL-008", "SEOUL-011", "SEOUL-014", "SEOUL-015"
+        "GOV-003",
+        "GOV-004",
+        "GOV-005",
+        "GOV-006",
+        "GOV-007",
+        "GOV-012",
+        "SEOUL-005",
+        "SEOUL-008",
+        "SEOUL-011",
+        "SEOUL-014",
+        "SEOUL-015"
       ],
       "데이터_조건_경고": "'9/20 기준 접수 중·상시 15건 이상' 목표에 상시 11건뿐이다. 기간 모집 16건 중 최소 4건이 9/20에 접수 중인지 확인해야 한다.",
       "원문_조사_결과": {
@@ -66,6 +107,26 @@
         "설명": "뉴스는 출처로 쓰지 않으므로 값을 바꾸지 않고 확인 대상만 기록한다.",
         "SEOUL-012": "소득 기준이 중위소득 150% 이하로 완화되고 하한 48% 초과가 생겼다는 보도가 있다. 현재 값은 income_max_pct 120이다. 하한 조건은 income_max_pct 하나로 표현할 수 없어 exceptions_text가 필요하다. 대상도 1인 가구·무자녀 신혼부부·청년 한부모·전세사기 피해 청년으로 확대됐다는 보도가 있다.",
         "국토부_청년월세지원": "서울시 월세지원과 별개 사업이다. 청년 가구 중위소득 60% 이하 기준이 보도된다. 목록에 없으므로 혼동하지 않도록 기록만 남긴다."
+      },
+      "원문_반영": {
+        "반영일": "2026-09-20",
+        "반영_건수": 5,
+        "대상": [
+          "SEOUL-004",
+          "SEOUL-009",
+          "SEOUL-012",
+          "GOV-006",
+          "GOV-007"
+        ],
+        "출처": "사용자가 공고 화면에서 복사해 전달한 원문",
+        "남은_건수": 22,
+        "SEOUL-009_참고": "신청일이 '예산 소진 시까지'라 마감일이 없다. data/README.md 7장에 따라 apply_end 를 비워 상시 접수로 두었다.",
+        "SEOUL-012_참고": "공고 본문에 URL 이 없어 source_url 을 채우지 못했다. 승격 불가."
+      },
+      "statuses_판단_근거": {
+        "GOV-006": "원문 제외 사유가 \"상급학교 진학 준비·학원 수강\"이라 일반 재학생 포함 여부를 단정할 수 없다. statuses 를 비워 규칙 엔진이 학적을 판정하지 않게 하고, 문장은 exceptions_text 로 AI B 에 넘겼다.",
+        "GOV-007": "같음.",
+        "원칙": "표로 단정할 수 없는 조건은 unmet 으로 만들지 않는다. 잘못된 unmet 은 사용자에게 \"안 된다\"고 잘못 말하는 것이라 가장 나쁜 오류다 (.kiro/steering/03-dev-method.md)."
       }
     }
   },
@@ -74,7 +135,9 @@
       "id": "GOV-001",
       "title": "국가장학금",
       "agency": "한국장학재단",
-      "categories": ["scholarship"],
+      "categories": [
+        "scholarship"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -85,10 +148,16 @@
       "apply_end": null,
       "age_min": null,
       "age_max": null,
-      "regions": ["전국"],
-      "statuses": ["enrolled"],
+      "regions": [
+        "전국"
+      ],
+      "statuses": [
+        "enrolled"
+      ],
       "income_max_pct": null,
-      "extra_conditions": ["직전 학기 성적: 기준 이상"],
+      "extra_conditions": [
+        "직전 학기 성적: 기준 이상"
+      ],
       "exceptions_text": "",
       "benefit": "",
       "documents": [],
@@ -100,7 +169,9 @@
       "id": "GOV-002",
       "title": "국가근로장학금",
       "agency": "한국장학재단",
-      "categories": ["scholarship"],
+      "categories": [
+        "scholarship"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -111,10 +182,16 @@
       "apply_end": null,
       "age_min": null,
       "age_max": null,
-      "regions": ["전국"],
-      "statuses": ["enrolled"],
+      "regions": [
+        "전국"
+      ],
+      "statuses": [
+        "enrolled"
+      ],
       "income_max_pct": null,
-      "extra_conditions": ["직전 학기 성적: 기준 이상"],
+      "extra_conditions": [
+        "직전 학기 성적: 기준 이상"
+      ],
       "exceptions_text": "",
       "benefit": "",
       "documents": [],
@@ -126,7 +203,10 @@
       "id": "SEOUL-001",
       "title": "서울 청년 취업사관학교 (SeSSaC)",
       "agency": "서울특별시",
-      "categories": ["scholarship", "job"],
+      "categories": [
+        "scholarship",
+        "job"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -137,8 +217,14 @@
       "apply_end": null,
       "age_min": 15,
       "age_max": null,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "job_seeking"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "job_seeking"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -152,7 +238,10 @@
       "id": "GOV-003",
       "title": "K-Digital Training",
       "agency": "고용노동부",
-      "categories": ["scholarship", "job"],
+      "categories": [
+        "scholarship",
+        "job"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -163,8 +252,13 @@
       "apply_end": null,
       "age_min": null,
       "age_max": null,
-      "regions": ["전국"],
-      "statuses": ["final_semester", "job_seeking"],
+      "regions": [
+        "전국"
+      ],
+      "statuses": [
+        "final_semester",
+        "job_seeking"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -178,7 +272,9 @@
       "id": "GOV-004",
       "title": "국민내일배움카드",
       "agency": "고용노동부",
-      "categories": ["scholarship"],
+      "categories": [
+        "scholarship"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -189,8 +285,14 @@
       "apply_end": null,
       "age_min": null,
       "age_max": null,
-      "regions": ["전국"],
-      "statuses": ["final_semester", "job_seeking", "employed"],
+      "regions": [
+        "전국"
+      ],
+      "statuses": [
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -204,7 +306,9 @@
       "id": "SEOUL-002",
       "title": "서울시 청년 마음건강 지원사업",
       "agency": "서울특별시",
-      "categories": ["scholarship"],
+      "categories": [
+        "scholarship"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -215,8 +319,16 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -230,7 +342,9 @@
       "id": "SEOUL-003",
       "title": "서울시 청년 인생설계학교",
       "agency": "서울특별시",
-      "categories": ["scholarship"],
+      "categories": [
+        "scholarship"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -241,8 +355,16 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -254,35 +376,48 @@
     },
     {
       "id": "SEOUL-004",
-      "title": "서울시 청년수당",
-      "agency": "서울특별시",
-      "categories": ["living", "job"],
-      "source_url": null,
+      "title": "2026 서울청년수당",
+      "agency": "서울특별시 청년사업담당관",
+      "categories": [
+        "living",
+        "job"
+      ],
+      "source_url": "https://youth.seoul.go.kr/youthConts.do?key=2310100061&sc_pbancSeCd=012&sc_bbsStngSn=2212200001&sc_bbsCtgrySn=2310200011&sc_qnaCtgryCd=004&sc_faqCtgryCd=005",
       "apply_url": null,
-      "checked_at": null,
+      "checked_at": "2026-09-20",
       "fetched_at": null,
       "source_kind": "manual",
-      "data_status": "recheck",
-      "apply_start": null,
-      "apply_end": null,
+      "data_status": "closed",
+      "apply_start": "2026-05-27",
+      "apply_end": "2026-05-29",
       "age_min": 19,
       "age_max": 34,
-      "regions": ["서울"],
-      "statuses": ["job_seeking"],
-      "income_max_pct": 150,
-      "extra_conditions": ["고용보험 가입 이력: 없음"],
-      "exceptions_text": "",
-      "benefit": "",
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "job_seeking"
+      ],
+      "income_max_pct": null,
+      "extra_conditions": [],
+      "exceptions_text": "만19~34세 최종학력 졸업 이후 미취업 청년 6,000명 이내 / 미취업자만 신청가능 단, 주30시간 이하 또는 3개월 이하 단기근로자 신청 가능",
+      "benefit": "활동지원금(월 50만원 최대 6개월)",
       "documents": [],
       "steps": [],
-      "raw_text": "",
-      "condition_sources": {}
+      "raw_text": "정책 소개\nㅇ 서울에 거주하고 있는 만 19세~34세 미취업 또는 단기 근로 청년에게 활동지원금(월 50만원 최대 6개월)을 지급하고, 강점진단 종합지원, 멘토링, 취업지원 프로그램 제공 등 청년 니즈에 맞게 프로그램 연계를 지속 지원하는 사업\n지원 내용\nㅇ 미취업 청년이 진로 탐색 및 목표 달성에 집중할 수 있도록 금전적 지원과 성장 지원을 통해 사회안전망 제공\n사업신청기간\n2026. 5. 27.(수) 10:00 ~ 2026. 5. 29.(금) 16:00\n지원규모\n만19~34세 최종학력 졸업 이후 미취업 청년 6,000명 이내\n신청자격\n연령 만19세~34세 (출생일이 1991년 5월 1일~2007년 5월 31일인 자)\n취업상태 미취업자만 신청가능 단, 주30시간 이하 또는 3개월 이하 단기근로자 신청 가능",
+      "condition_sources": {
+        "age": "만19세~34세 (출생일이 1991년 5월 1일~2007년 5월 31일인 자)",
+        "region": "서울에 거주하고 있는 만 19세~34세 미취업 또는 단기 근로 청년",
+        "status": "미취업자만 신청가능 단, 주30시간 이하 또는 3개월 이하 단기근로자 신청 가능"
+      }
     },
     {
       "id": "SEOUL-005",
       "title": "서울시 청년 긴급생활안정자금 이자지원",
       "agency": "서울특별시",
-      "categories": ["living"],
+      "categories": [
+        "living"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -293,8 +428,16 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -308,7 +451,9 @@
       "id": "GOV-005",
       "title": "청년 일자리 도약장려금",
       "agency": "고용노동부",
-      "categories": ["job"],
+      "categories": [
+        "job"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -319,10 +464,16 @@
       "apply_end": null,
       "age_min": 15,
       "age_max": 34,
-      "regions": ["전국"],
-      "statuses": ["job_seeking"],
+      "regions": [
+        "전국"
+      ],
+      "statuses": [
+        "job_seeking"
+      ],
       "income_max_pct": null,
-      "extra_conditions": ["구직 기간: 6개월 이상"],
+      "extra_conditions": [
+        "구직 기간: 6개월 이상"
+      ],
       "exceptions_text": "",
       "benefit": "",
       "documents": [],
@@ -334,7 +485,9 @@
       "id": "SEOUL-006",
       "title": "서울형 청년 역량강화 및 일자리 매칭 지원",
       "agency": "서울특별시",
-      "categories": ["job"],
+      "categories": [
+        "job"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -345,8 +498,12 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["job_seeking"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "job_seeking"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -360,59 +517,75 @@
       "id": "GOV-006",
       "title": "국민취업지원제도 1유형",
       "agency": "고용노동부",
-      "categories": ["job", "living"],
-      "source_url": null,
+      "categories": [
+        "job",
+        "living"
+      ],
+      "source_url": "https://m.work24.go.kr/cm/c/f/1100/selecSystInfo.do?systId=SI00000316&systClId=SC00000206",
       "apply_url": null,
-      "checked_at": null,
+      "checked_at": "2026-09-20",
       "fetched_at": null,
       "source_kind": "manual",
-      "data_status": "recheck",
+      "data_status": "verified",
       "apply_start": null,
       "apply_end": null,
-      "age_min": 18,
-      "age_max": 34,
-      "regions": ["전국"],
-      "statuses": ["final_semester", "job_seeking"],
+      "age_min": 15,
+      "age_max": 69,
+      "regions": [
+        "전국"
+      ],
+      "statuses": [],
       "income_max_pct": 120,
       "extra_conditions": [],
-      "exceptions_text": "",
-      "benefit": "",
+      "exceptions_text": "‣ 소득: 가구 소득, 본인 소득 각각 중위소득의 60% 이하 / ‣ 재산: 4억원(청년은 5억원) 이하 / ‣ 즉시 취업이 어려운 사람: 상급학교에 진학하기 위해 학교에서 수업을 받고 있거나, 전문자격증을 따기 위해 학원 수업 등을 수강하고 있는 사람",
+      "benefit": "구직촉진수당 매달 60만원씩 6개월",
       "documents": [],
       "steps": [],
-      "raw_text": "",
-      "condition_sources": {}
+      "raw_text": "지원대상\n2) 1유형 참여자(저소득층)\n아래의 조건을 모두 충족해야 합니다.\n‣ 나이: 만 15세 ～ 만 69세 이하\n‣ 소득: 가구 소득, 본인 소득 각각 중위소득의 60% 이하\n단, '청년(만 15~34세, 병역의무이행기간 가산_최대 37세)'은 가구 소득이 중위소득의 120% 이하\n‣ 재산: 4억원(청년은 5억원) 이하\n참여할 수 없는 사람\n‣ 이미 충분히 일을 하고 있는 사람: 임금을 받는 근로자로서 1주일에 30시간 이상 일을 하는 사람, 사업자로서 1달에 250만원 이상 소득이 있는 사람\n‣ 이미 비슷한 지원을 받고 있는 사람: 실업급여를 받고 있는 사람, 생계급여를 받고 있는 사람(조건부 수급자 제외)\n‣ 즉시 취업이 어려운 사람: 상급학교에 진학하기 위해 학교에서 수업을 받고 있거나, 전문자격증을 따기 위해 학원 수업 등을 수강하고 있는 사람\n지원내용\n1유형 참여자(저소득층)에게는 구직촉진수당을 지급합니다. 생계 걱정을 덜고 취업 준비에 집중할 수 있도록 매달 60만원씩 6개월 동안 지급합니다.",
+      "condition_sources": {
+        "age": "‣ 나이: 만 15세 ～ 만 69세 이하",
+        "income": "단, '청년(만 15~34세, 병역의무이행기간 가산_최대 37세)'은 가구 소득이 중위소득의 120% 이하"
+      }
     },
     {
       "id": "GOV-007",
       "title": "국민취업지원제도 2유형",
       "agency": "고용노동부",
-      "categories": ["job"],
-      "source_url": null,
+      "categories": [
+        "job"
+      ],
+      "source_url": "https://m.work24.go.kr/cm/c/f/1100/selecSystInfo.do?systId=SI00000316&systClId=SC00000206",
       "apply_url": null,
-      "checked_at": null,
+      "checked_at": "2026-09-20",
       "fetched_at": null,
       "source_kind": "manual",
-      "data_status": "recheck",
+      "data_status": "verified",
       "apply_start": null,
       "apply_end": null,
-      "age_min": 18,
-      "age_max": 34,
-      "regions": ["전국"],
-      "statuses": ["final_semester", "job_seeking"],
+      "age_min": 15,
+      "age_max": 69,
+      "regions": [
+        "전국"
+      ],
+      "statuses": [],
       "income_max_pct": null,
       "extra_conditions": [],
-      "exceptions_text": "",
-      "benefit": "",
+      "exceptions_text": "‣ 소득: 가구 전체 소득이 중위소득의 100% 이하 / 단, '청년(만 15~34세, 병역의무이행기간 가산_최대 37세)'은 소득과 상관없이 참여할 수 있습니다. / ‣ 즉시 취업이 어려운 사람: 상급학교에 진학하기 위해 학교에서 수업을 받고 있거나, 전문자격증을 따기 위해 학원 수업 등을 수강하고 있는 사람",
+      "benefit": "취업활동비용 지급",
       "documents": [],
       "steps": [],
-      "raw_text": "",
-      "condition_sources": {}
+      "raw_text": "지원대상\n3) 2유형 참여자\n아래의 조건을 모두 충족해야 합니다.\n‣ 나이: 만 15세 ～ 만 69세 이하\n‣ 소득: 가구 전체 소득이 중위소득의 100% 이하\n단, '청년(만 15~34세, 병역의무이행기간 가산_최대 37세)'은 소득과 상관없이 참여할 수 있습니다.\n참여할 수 없는 사람\n‣ 이미 충분히 일을 하고 있는 사람: 임금을 받는 근로자로서 1주일에 30시간 이상 일을 하는 사람, 사업자로서 1달에 250만원 이상 소득이 있는 사람\n‣ 이미 비슷한 지원을 받고 있는 사람: 실업급여를 받고 있는 사람, 생계급여를 받고 있는 사람(조건부 수급자 제외)\n‣ 즉시 취업이 어려운 사람: 상급학교에 진학하기 위해 학교에서 수업을 받고 있거나, 전문자격증을 따기 위해 학원 수업 등을 수강하고 있는 사람\n지원내용\n2유형 참여자에게는 취업활동비용을 지급합니다. 저소득층이 아닌 참여자에게도 취업 준비에 필요한 비용을 지원합니다.",
+      "condition_sources": {
+        "age": "‣ 나이: 만 15세 ～ 만 69세 이하"
+      }
     },
     {
       "id": "GOV-008",
       "title": "공공기관 체험형 인턴 (고용24 공고 51537410)",
       "agency": "확인 필요",
-      "categories": ["job"],
+      "categories": [
+        "job"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -423,8 +596,13 @@
       "apply_end": null,
       "age_min": 15,
       "age_max": 34,
-      "regions": ["전국"],
-      "statuses": ["enrolled", "job_seeking"],
+      "regions": [
+        "전국"
+      ],
+      "statuses": [
+        "enrolled",
+        "job_seeking"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -438,7 +616,9 @@
       "id": "GOV-009",
       "title": "공공기관 체험형 인턴 (고용24 공고 51647078)",
       "agency": "확인 필요",
-      "categories": ["job"],
+      "categories": [
+        "job"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -449,8 +629,13 @@
       "apply_end": null,
       "age_min": 15,
       "age_max": 34,
-      "regions": ["전국"],
-      "statuses": ["enrolled", "job_seeking"],
+      "regions": [
+        "전국"
+      ],
+      "statuses": [
+        "enrolled",
+        "job_seeking"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -464,7 +649,9 @@
       "id": "GOV-010",
       "title": "공공기관 체험형 인턴 (고용24 공고 K120422609080031)",
       "agency": "확인 필요",
-      "categories": ["job"],
+      "categories": [
+        "job"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -475,8 +662,13 @@
       "apply_end": null,
       "age_min": 15,
       "age_max": 34,
-      "regions": ["전국"],
-      "statuses": ["enrolled", "job_seeking"],
+      "regions": [
+        "전국"
+      ],
+      "statuses": [
+        "enrolled",
+        "job_seeking"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -490,7 +682,9 @@
       "id": "GOV-011",
       "title": "공공기관 체험형 인턴 (고용24 공고 2608270003703)",
       "agency": "확인 필요",
-      "categories": ["job"],
+      "categories": [
+        "job"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -501,8 +695,13 @@
       "apply_end": null,
       "age_min": 15,
       "age_max": 34,
-      "regions": ["전국"],
-      "statuses": ["enrolled", "job_seeking"],
+      "regions": [
+        "전국"
+      ],
+      "statuses": [
+        "enrolled",
+        "job_seeking"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -516,7 +715,9 @@
       "id": "SEOUL-007",
       "title": "서울형 청년일자리 (인턴십)",
       "agency": "서울특별시",
-      "categories": ["job"],
+      "categories": [
+        "job"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -527,8 +728,12 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["job_seeking"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "job_seeking"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -542,7 +747,9 @@
       "id": "SEOUL-008",
       "title": "기후동행카드 청년 할인",
       "agency": "서울특별시",
-      "categories": ["culture"],
+      "categories": [
+        "culture"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -553,8 +760,16 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -566,35 +781,53 @@
     },
     {
       "id": "SEOUL-009",
-      "title": "서울 청년문화패스",
-      "agency": "서울특별시",
-      "categories": ["culture"],
-      "source_url": null,
-      "apply_url": null,
-      "checked_at": null,
+      "title": "서울청년문화패스",
+      "agency": "서울특별시 미래청년기획단",
+      "categories": [
+        "culture"
+      ],
+      "source_url": "https://youth.seoul.go.kr/youthConts.do?key=2310200023&sc_pbancSeCd=005&sc_bbsStngSn=221200001&sc_bbsCtgrySn=2310200005&sc_qnaCtgryCd=&sc_faqCtgryCd=002",
+      "apply_url": "https://youthcultureseoul.kr/",
+      "checked_at": "2026-09-20",
       "fetched_at": null,
       "source_kind": "manual",
-      "data_status": "recheck",
-      "apply_start": null,
+      "data_status": "verified",
+      "apply_start": "2025-12-22",
       "apply_end": null,
       "age_min": 21,
-      "age_max": 23,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "age_max": 24,
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": 150,
       "extra_conditions": [],
-      "exceptions_text": "",
-      "benefit": "",
+      "exceptions_text": "※ 해당 연령 내 1회 지원(2023~2025년 기선정자 신청 불가) / ※ 의무복무 제대군인 청년 대상 최대 3년 이내 연령 가산 시행 / 소득요건 : 신청 시 건강보험료 (본인부담금 기준 중위소득 150% 이하) / 2025. 12. 22.(월) 10:00 ~ 예산 소진 시까지(약 50,000여명)",
+      "benefit": "문화예술분야 관람 지원비 1인당(연간) 20만원 문화이용권(카드) 지급",
       "documents": [],
-      "steps": [],
-      "raw_text": "",
-      "condition_sources": {}
+      "steps": [
+        "청년몽땅정보통 접속 후 '서울청년문화패스' 온라인 신청 및 접수"
+      ],
+      "raw_text": "서울청년문화패스 사업이란?\n서울청년문화패스는 사회에 첫 발을 내딛는 21세~24세 청년들에게 공연(뮤지컬·연극, 클래식·오페라, 발레·무용, 국악)및 전시 관람 기회를 제공하고 문화예술분야 활성화를 위해 문화이용권을 지원하는 사업입니다.\n지원대상자\n연령요건 : 21세~24세 청년(2002~2005년생)\n※ 해당 연령 내 1회 지원(2023~2025년 기선정자 신청 불가)\n※ 의무복무 제대군인 청년 대상 최대 3년 이내 연령 가산 시행\n주거요건 : 신청일 기준 서울특별시 거주(주민등록 및 외국인등록대장 기준)\n소득요건 : 신청 시 건강보험료 (본인부담금 기준 중위소득 150% 이하)\n신청일\n2025. 12. 22.(월) 10:00 ~ 예산 소진 시까지(약 50,000여명)\n※ 예산 소진 시 신청 마감은 청년몽땅정보통 안내 예정\n지원내용\n문화예술분야 관람 지원비 1인당(연간) 20만원 문화이용권(카드) 지급(신한은행 계좌 개설 및 체크카드 발급 필수)\n청년문화패스 전용 홈페이지에서 제공하는 공연에 한해 예매가능\n신청방법\n청년몽땅정보통 접속 후 '서울청년문화패스' 온라인 신청 및 접수",
+      "condition_sources": {
+        "age": "연령요건 : 21세~24세 청년(2002~2005년생)",
+        "region": "주거요건 : 신청일 기준 서울특별시 거주(주민등록 및 외국인등록대장 기준)",
+        "income": "소득요건 : 신청 시 건강보험료 (본인부담금 기준 중위소득 150% 이하)"
+      }
     },
     {
       "id": "SEOUL-010",
       "title": "서울 청년 대중교통비 지원",
       "agency": "서울특별시",
-      "categories": ["culture"],
+      "categories": [
+        "culture"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -605,8 +838,16 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 24,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -620,7 +861,9 @@
       "id": "SEOUL-011",
       "title": "서울 청년 문화 혜택 프로그램",
       "agency": "서울특별시",
-      "categories": ["culture"],
+      "categories": [
+        "culture"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -631,8 +874,16 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -644,35 +895,54 @@
     },
     {
       "id": "SEOUL-012",
-      "title": "서울 청년월세지원",
+      "title": "청년월세지원",
       "agency": "서울특별시",
-      "categories": ["housing"],
+      "categories": [
+        "housing"
+      ],
       "source_url": null,
       "apply_url": null,
-      "checked_at": null,
+      "checked_at": "2026-09-20",
       "fetched_at": null,
       "source_kind": "manual",
       "data_status": "recheck",
-      "apply_start": null,
-      "apply_end": null,
+      "apply_start": "2026-05-06",
+      "apply_end": "2026-12-31",
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
-      "income_max_pct": 120,
-      "extra_conditions": ["주거 형태: 월세"],
-      "exceptions_text": "",
-      "benefit": "",
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
+      "income_max_pct": 150,
+      "extra_conditions": [
+        "주거 형태: 월세",
+        "다른 지원 수혜 중: 없음"
+      ],
+      "exceptions_text": "임차보증금 8천만원 이하 및 월세 60만원이하 건물에 월세로 거주 / 기준 중위소득 48% 초과 ~ 150% 이하 무주택자 / ※ 군 복무기간을 고려해 최대 3살까지 지원 연령 상한 연장 / ※ '26년 이전 서울시 청년월세지원 기 선정(수급)자, 국토교통부 청년월세 한시 특별지원금을 수혜중인 사람 및 자치구 청년월세 지원금을 수혜중인 사람은 지원 불가",
+      "benefit": "월 최대 20만원 월세 지원 (12개월 / 240만원), 생애 1회",
       "documents": [],
       "steps": [],
-      "raw_text": "",
-      "condition_sources": {}
+      "raw_text": "01 지원대상\n신청일 기준 주민등록등본상 서울시에 거주하는 청년\n신청연도 기준 19세 이상 ~ 39세 이하 청년(1986.1.1. ~ 2007.12.31.)\n임차보증금 8천만원 이하 및 월세 60만원이하 건물에 월세로 거주\n기준 중위소득 48% 초과 ~ 150% 이하 무주택자\n※ 군 복무기간을 고려해 최대 3살까지 지원 연령 상한 연장\n※ '26년 이전 서울시 청년월세지원 기 선정(수급)자, 국토교통부 청년월세 한시 특별지원금을 수혜중인 사람 및 자치구 청년월세 지원금을 수혜중인 사람은 지원 불가\n02 지원내용\n월 최대 20만원 월세 지원 (12개월 / 240만원)\n생애 1회\n04 신청기간\n2026. 5. 6.(수) 10:00 ~ 12.31.(화) 18:00 마감",
+      "condition_sources": {
+        "age": "신청연도 기준 19세 이상 ~ 39세 이하 청년(1986.1.1. ~ 2007.12.31.)",
+        "region": "신청일 기준 주민등록등본상 서울시에 거주하는 청년",
+        "income": "기준 중위소득 48% 초과 ~ 150% 이하 무주택자"
+      }
     },
     {
       "id": "SEOUL-013",
       "title": "청년 안심주택 공급",
       "agency": "서울특별시",
-      "categories": ["housing"],
+      "categories": [
+        "housing"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -683,8 +953,16 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
       "extra_conditions": [],
       "exceptions_text": "",
@@ -698,7 +976,9 @@
       "id": "SEOUL-014",
       "title": "서울시 청년 임차보증금 이자지원",
       "agency": "서울특별시",
-      "categories": ["housing"],
+      "categories": [
+        "housing"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -709,10 +989,20 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
-      "extra_conditions": ["주거 형태: 전세 또는 월세"],
+      "extra_conditions": [
+        "주거 형태: 전세 또는 월세"
+      ],
       "exceptions_text": "",
       "benefit": "",
       "documents": [],
@@ -724,7 +1014,9 @@
       "id": "SEOUL-015",
       "title": "청년 전세보증금 반환보증 보증료 지원",
       "agency": "서울특별시",
-      "categories": ["housing"],
+      "categories": [
+        "housing"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -735,10 +1027,20 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 39,
-      "regions": ["서울"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "regions": [
+        "서울"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
-      "extra_conditions": ["주거 형태: 전세 또는 월세"],
+      "extra_conditions": [
+        "주거 형태: 전세 또는 월세"
+      ],
       "exceptions_text": "",
       "benefit": "",
       "documents": [],
@@ -750,7 +1052,9 @@
       "id": "GOV-012",
       "title": "청년전용 버팀목 전세자금대출",
       "agency": "주택도시기금",
-      "categories": ["housing"],
+      "categories": [
+        "housing"
+      ],
       "source_url": null,
       "apply_url": null,
       "checked_at": null,
@@ -761,10 +1065,20 @@
       "apply_end": null,
       "age_min": 19,
       "age_max": 34,
-      "regions": ["전국"],
-      "statuses": ["enrolled", "on_leave", "final_semester", "job_seeking", "employed"],
+      "regions": [
+        "전국"
+      ],
+      "statuses": [
+        "enrolled",
+        "on_leave",
+        "final_semester",
+        "job_seeking",
+        "employed"
+      ],
       "income_max_pct": null,
-      "extra_conditions": ["주거 형태: 전세"],
+      "extra_conditions": [
+        "주거 형태: 전세"
+      ],
       "exceptions_text": "",
       "benefit": "",
       "documents": [],

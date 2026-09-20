@@ -351,28 +351,77 @@ class LoaderTest(unittest.TestCase):
 class RepositoryDataTest(unittest.TestCase):
     """저장소에 실제로 들어 있는 데이터로 돌려본다."""
 
-    def test_미검수_staging_은_전건_후보에서_빠진다(self):
-        path = Path(__file__).resolve().parents[1] / "data" / "policies" / "staging.json"
-        policies, issues = loader.load_policies(path)
+    def setUp(self):
+        self.root = Path(__file__).resolve().parents[1]
+
+    def test_staging_은_스키마_오류_없이_로드된다(self):
+        policies, issues = loader.load_policies(
+            self.root / "data" / "policies" / "staging.json"
+        )
         self.assertEqual(len(policies), 27)
         self.assertEqual(issues, [])
 
+    def test_원문이_없는_정책은_후보에서_빠진다(self):
+        """공고 원문을 채운 정책만 후보가 된다 (FR12)."""
+        policies, _ = loader.load_policies(
+            self.root / "data" / "policies" / "staging.json"
+        )
         result = rules.evaluate_policies(profile(), policies, TODAY)
-        self.assertTrue(result["no_result"])
-        reasons = {item["reason"] for item in result["excluded"]}
-        self.assertEqual(reasons, {c.EXCLUDED_NO_SOURCE})
 
-    def test_대표_프로필_다섯개를_모두_돌린다(self):
-        root = Path(__file__).resolve().parents[1]
-        policies, _ = loader.load_policies(root / "data" / "policies" / "staging.json")
+        원문_없음 = [
+            item
+            for item in result["excluded"]
+            if item["reason"] in {c.EXCLUDED_NO_SOURCE, c.EXCLUDED_NO_RAW_TEXT}
+        ]
+        self.assertTrue(원문_없음, "원문이 비어 제외된 정책이 있어야 한다")
+        for item in 원문_없음:
+            with self.subTest(policy_id=item["policy_id"]):
+                raw = next(p for p in policies if p["id"] == item["policy_id"])
+                self.assertFalse(raw.get("source_url") and raw.get("checked_at") and raw.get("raw_text"))
+
+    def test_검수_통과본은_대표_프로필에서_카드를_만든다(self):
+        """P4 를 뺀 네 프로필에서 기본 표시 카드가 하나 이상 나온다.
+
+        P4 는 소득 over_150 이라 승격된 정책에서 전부 unlikely 다. 대안 흐름 담당이다.
+        """
+        policies, issues = loader.load_policies(
+            self.root / "data" / "policies" / "policies.json"
+        )
+        self.assertEqual(issues, [])
+        self.assertGreaterEqual(len(policies), 4)
+
         entries = json.loads(
-            (root / "data" / "profiles" / "profiles.json").read_text(encoding="utf-8")
+            (self.root / "data" / "profiles" / "profiles.json").read_text(encoding="utf-8")
         )["profiles"]
         for entry in entries:
             with self.subTest(profile=entry["id"]):
                 result = rules.evaluate_policies(entry["profile"], policies, TODAY)
-                self.assertIsInstance(result["policies"], list)
-                self.assertEqual(len(result["excluded"]), 27)
+                if entry["id"] == "P4":
+                    self.assertTrue(result["no_result"])
+                    self.assertGreaterEqual(result["hidden_unlikely_count"], 1)
+                else:
+                    self.assertFalse(result["no_result"])
+                    self.assertGreaterEqual(len(result["policies"]), 1)
+
+    def test_마감된_청년수당은_기본_결과에서_빠진다(self):
+        policies, _ = loader.load_policies(
+            self.root / "data" / "policies" / "policies.json"
+        )
+        result = rules.evaluate_policies(profile(), policies, TODAY)
+        빠진_이유 = {
+            item["policy_id"]: item["reason"] for item in result["excluded"]
+        }
+        self.assertEqual(빠진_이유.get("SEOUL-004"), c.EXCLUDED_CLOSED)
+
+    def test_미확인_항목은_소득이다(self):
+        """승격본에서 소득 조건이 있는 정책은 소득을 묻는 재료를 낸다."""
+        policies, _ = loader.load_policies(
+            self.root / "data" / "policies" / "policies.json"
+        )
+        result = rules.evaluate_policies(profile(), policies, TODAY)
+        self.assertEqual(
+            {item["field"] for item in result["unknown_items"]}, {"income_bracket"}
+        )
 
 
 if __name__ == "__main__":
