@@ -225,6 +225,64 @@ class TestPlaceholder(unittest.TestCase):
         )
 
 
+class TestSummaryMirror(unittest.TestCase):
+    """조건 요약을 `name` 과 `summary` 두 키로 내보낸다.
+
+    `docs/03-api-contract.md` 4-1 이 요약 키를 "`name` 또는 `summary`" 로 열어 두고
+    확정을 미뤘다. 같은 문서가 경고하는 실패는 **한쪽이 쓰고 다른 쪽이 읽어 요약이 빈
+    칸으로 나가는데 오류는 나지 않는** 것이다. `server/orchestrator_adapters.py` 는
+    `item.get("summary")` 를 읽는다.
+    """
+
+    def test_summary_로_들어와도_요약이_살아남는다(self):
+        """서버 DTO(`AIExceptionCondition`)가 `summary` 로 넘긴다.
+
+        `name` 만 읽으면 요약이 빈 값이 되고, 서버가 `"공고 확인 필요"` 로 대체해
+        **판정은 맞는데 요약만 틀린 카드**가 나간다. 오류는 나지 않는다.
+        """
+        checked, removed = verify_conditions(
+            [{"summary": "휴학생 제외", "result": UNMET, "excerpt": EXCERPT}], RAW
+        )
+        self.assertEqual(removed, [], "발췌는 원문에 있으므로 제거 대상이 아니다")
+        self.assertTrue(checked[0]["excerpt_verified"])
+        self.assertEqual(checked[0]["summary"], "휴학생 제외")
+        self.assertEqual(checked[0]["name"], "휴학생 제외")
+
+    def test_요약이_아예_없으면_두_키가_빈다(self):
+        checked, _ = verify_conditions(
+            [{"result": UNMET, "excerpt": EXCERPT}], RAW
+        )
+        self.assertEqual(checked[0]["name"], "")
+        self.assertEqual(checked[0]["summary"], "")
+
+    def test_통과한_조건은_두_키가_같다(self):
+        checked, _ = verify_conditions(
+            [{"name": "휴학생 제외", "result": UNMET, "excerpt": EXCERPT}], RAW
+        )
+        self.assertEqual(checked[0]["name"], "휴학생 제외")
+        self.assertEqual(
+            checked[0]["summary"],
+            "휴학생 제외",
+            "서버가 summary 를 읽는다. 비면 요약이 빈 칸으로 화면에 나간다",
+        )
+
+    def test_검증_실패한_조건은_두_키가_모두_빈다(self):
+        checked, _ = verify_conditions(
+            [{"name": "지우려던 요약", "result": UNMET, "excerpt": "원문에 없는 열 글자 넘는 문장"}],
+            RAW,
+        )
+        self.assertEqual(checked[0]["name"], "")
+        self.assertEqual(
+            checked[0]["summary"],
+            "",
+            "한쪽만 비우면 지우려던 근거가 다른 키로 화면에 나간다",
+        )
+
+    def test_자리표시도_두_키를_가진다(self):
+        checked, _ = verify_conditions([placeholder_unknown("timeout")], RAW)
+        self.assertEqual(checked[0]["summary"], "")
+
+
 class TestDataInvariant(unittest.TestCase):
     """`exceptions_text` 가 `raw_text` 안에 있어야 한다 (데이터 검수)."""
 

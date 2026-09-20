@@ -167,6 +167,10 @@ def public_conditions(
 
         visible.append(
             {
+                # 요약 키는 `name` 하나다. `docs/03-api-contract.md` 4-1 이 응답
+                # 항목으로 한 이름만 둔다. `citation.py` 가 내부 경계에서 `summary` 를
+                # 같이 채우는 것과 구분한다. 응답 본문에 두 키를 다 넣으면 프론트가
+                # 어느 쪽을 읽어야 하는지 모호해진다.
                 "name": name,
                 "result": result,
                 "judged_by": judged_by,

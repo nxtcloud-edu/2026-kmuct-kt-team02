@@ -131,6 +131,7 @@ def verify_conditions(
 
     for condition in conditions:
         item = dict(condition)
+        _mirror_summary(item)
 
         if item.get("placeholder"):
             item["excerpt_verified"] = False
@@ -150,6 +151,7 @@ def verify_conditions(
         removed.append(
             {
                 "name": str(item.get("name") or ""),
+                "summary": str(item.get("name") or ""),
                 "excerpt": str(item.get("excerpt") or ""),
                 "reason": result.reason,
             }
@@ -157,6 +159,7 @@ def verify_conditions(
 
         item["result"] = UNKNOWN
         item["name"] = ""
+        item["summary"] = ""
         item["excerpt"] = None
         item["excerpt_verified"] = False
         if not item.get("needed_field"):
@@ -164,6 +167,28 @@ def verify_conditions(
         checked.append(item)
 
     return checked, removed
+
+
+def _mirror_summary(item: Dict[str, Any]) -> None:
+    """조건 요약을 `name` 과 `summary` 두 키에 같은 값으로 맞춘다.
+
+    `docs/03-api-contract.md` 4-1 이 요약 키를 "`name` 또는 `summary`" 로 열어 두고
+    확정을 12:00 통합으로 미뤘다. 같은 문서가 경고하는 실패는 **한쪽이 쓰고 다른 쪽이
+    읽어 조건 요약이 빈 칸으로 나가는데 오류는 나지 않는** 것이다. 표는 그대로
+    그려지므로 통합 중에 알아채기 어렵다.
+
+    이 모듈은 `name` 을 쓰고, `server/orchestrator_adapters.py` 의
+    `AIExceptionCondition` 은 `summary` 를 쓴다. 그래서 **읽을 때 둘 중 있는 것을
+    받고, 쓸 때 둘 다 채운다.** 한 방향만 맞추면 안 된다. 들어온 `summary` 를 보지
+    않고 `name` 으로만 덮으면 통과한 조건의 요약이 빈 값이 되고, 서버가
+    `"공고 확인 필요"` 로 대체해 **판정은 맞는데 요약만 틀린 카드**가 나간다.
+
+    `name` 을 먼저 보는 이유는 `docs/03-api-contract.md` 4-1 의 응답 항목이 `name`
+    이기 때문이다. 요약 키가 확정되면 이 함수를 지운다.
+    """
+    name = item.get("name") or item.get("summary") or ""
+    item["name"] = name
+    item["summary"] = name
 
 
 def placeholder_unknown(reason: str) -> Dict[str, Any]:
@@ -175,6 +200,7 @@ def placeholder_unknown(reason: str) -> Dict[str, Any]:
     """
     return {
         "name": "",
+        "summary": "",
         "result": UNKNOWN,
         "judged_by": BY_AI,
         "excerpt": None,
