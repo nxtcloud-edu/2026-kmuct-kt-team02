@@ -37,3 +37,32 @@ P1은 데모 프로필과 같은 값이다. P1에서 판정이 흔들리면 데�
 ## 5. 이 폴더에 두는 것
 
 이 폴더에는 프로필 5개의 값 정의만 둔다. **기대 판정 결과(정답셋)는 여기에 두지 않는다.** 채점 방법은 `../eval/README.md`에 있다.
+
+## 6. 백엔드B 확인 요청 — 자치구가 필수로 바뀌었다
+
+`server/schemas.py` 커밋 `980dfce` 에서 `ProfileInput.district` 가 `District | None = None` 에서 **`District`(필수)** 로 바뀌었다.
+문서 세 곳은 선택 입력으로 정해 두었다.
+
+| 근거 | 내용 |
+| --- | --- |
+| `../../docs/01-glossary-profile.md` 2장 | 자치구 `district` · **선택** · 자치구명 또는 `null` |
+| `../../docs/03-api-contract.md` 2장 | `district` · **선택** · 자치구명 또는 비움 |
+| `../../docs/02-requirements-ears.md` FR01 | 인수 기준 "**필수 3개** 미입력 시 시작 불가" |
+| `../../rules/README.md` 9장 | "자치구 미선택인데 자치구 정책 → 미확인으로 두고 미확인 항목 목록에 넣는다" |
+| `server/schemas.py` `AskableProfileField` | `district` 가 물을 수 있는 항목에 있다. 필수면 물을 이유가 없다 |
+
+### 지금 깨지는 것
+
+| 대상 | 영향 |
+| --- | --- |
+| `profiles.json` | **P1·P3·P4·P5 네 개가 `Profile` 검증에 걸린다.** 자치구를 채운 P2만 통과한다 |
+| 자치구 미확인 경로 | `district` 가 빌 수 없어 `needed_field: district` 가 발생하지 않는다 |
+| AI A 후속 질문 | `../../ai/conversation/README.md` 5장 후속 질문 표 둘째 줄이 `district` 다. 그 질문이 죽는다 |
+| 온보딩 폼 | 필수가 3개에서 4개로 늘어 "폼 5항목 30초" 목표와 FR01 인수 기준이 어긋난다 |
+
+판정 로직은 문제없다. `rules/conditions.evaluate_region` 은 자치구가 없으면 `unknown` + `needed_field: district` 를 정상적으로 낸다.
+막히는 곳은 **입력 계약**이다. 현재 상태는 `../../tests/test_rules_repository.py` 의 `DistrictContractTest` 가 고정해 두었다.
+
+**요청**: 문서가 기준이므로 `district: District | None = None` 으로 되돌려 주기를 바란다.
+필수로 유지해야 하는 이유가 있으면 위 문서 세 곳과 `profiles.json` 을 함께 고쳐야 한다.
+`profiles.json` 은 문서 기준에 맞춰 두었고, 자치구를 채워 넣으면 미확인 판정 검증 경로가 사라지므로 임의로 고치지 않았다.
