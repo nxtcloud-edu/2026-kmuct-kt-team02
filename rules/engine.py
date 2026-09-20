@@ -46,19 +46,20 @@ def evaluate_policy(profile: dict, policy: dict, today: date) -> tuple[dict, lis
     return evaluation, issues
 
 
-def _assign_footnote_ids(evaluations: list[dict]) -> None:
-    """응답 안에서 1부터 순서대로 각주 번호를 매긴다.
+def _assign_footnote_ids(evaluations: list[dict], start: int = 1) -> int:
+    """응답 안에서 1부터 순서대로 각주 번호를 매기고 다음 번호를 돌려준다.
 
-    발췌가 없는 조건은 화면에 나갈 수 없으므로 번호를 주지 않는다.
+    `ConditionEvaluation.footnote_id` 는 1 이상의 정수 **필수** 필드다. 발췌가 없는
+    조건에도 번호를 준다. 번호를 비우면 계약 검증에서 걸린다.
+    실제로 각주를 걸 수 있는지는 `excerpt` 유무로 판단한다 (발췌 없는 조건은 화면에
+    나갈 수 없다).
     """
-    next_id = 1
+    next_id = start
     for evaluation in evaluations:
         for condition in evaluation["conditions"]:
-            if condition.get("excerpt"):
-                condition["footnote_id"] = next_id
-                next_id += 1
-            else:
-                condition["footnote_id"] = None
+            condition["footnote_id"] = next_id
+            next_id += 1
+    return next_id
 
 
 def evaluate_policies(
@@ -94,8 +95,8 @@ def evaluate_policies(
     basic, hidden = sorting.split_display(evaluated)
     basic = basic[:limit]
 
-    _assign_footnote_ids(basic)
-    _assign_footnote_ids(hidden)
+    next_footnote = _assign_footnote_ids(basic)
+    _assign_footnote_ids(hidden, next_footnote)
 
     for evaluation in basic + hidden:
         evaluation.pop("_match_count", None)

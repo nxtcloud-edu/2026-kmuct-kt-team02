@@ -202,19 +202,51 @@ class NoResultTest(unittest.TestCase):
 
 
 class FootnoteTest(unittest.TestCase):
-    def test_발췌가_있는_조건에만_번호를_1부터_매긴다(self):
-        sentence = "만 19세 이상 만 39세 이하 서울 거주 청년이 신청할 수 있다."
-        target = policy(condition_sources={"age": sentence})
-        result = rules.evaluate_policies(profile(), [target], TODAY)
-        conditions = result["policies"][0]["conditions"]
-        numbered = [item for item in conditions if item["footnote_id"] is not None]
-        self.assertEqual([item["footnote_id"] for item in numbered], [1])
-        self.assertTrue(all(item["excerpt"] for item in numbered))
+    """footnote_id 는 1 이상의 정수 필수 필드다 (server/schemas.py)."""
 
-    def test_발췌가_없으면_번호를_주지_않는다(self):
+    def test_모든_조건에_1부터_번호를_매긴다(self):
         result = rules.evaluate_policies(profile(), [policy()], TODAY)
-        for condition in result["policies"][0]["conditions"]:
-            self.assertIsNone(condition["footnote_id"])
+        ids = [item["footnote_id"] for item in result["policies"][0]["conditions"]]
+        self.assertEqual(ids, list(range(1, len(ids) + 1)))
+
+    def test_번호는_정책을_넘어가며_이어진다(self):
+        result = rules.evaluate_policies(
+            profile(), [policy("SEOUL-001"), policy("SEOUL-002")], TODAY
+        )
+        ids = [
+            condition["footnote_id"]
+            for evaluation in result["policies"]
+            for condition in evaluation["conditions"]
+        ]
+        self.assertEqual(ids, list(range(1, len(ids) + 1)))
+
+    def test_접힌_영역_번호는_기본_표시_다음부터다(self):
+        result = rules.evaluate_policies(
+            profile(),
+            [policy("SEOUL-001"), policy("SEOUL-002", statuses=["job_seeking"])],
+            TODAY,
+        )
+        basic_ids = [
+            condition["footnote_id"]
+            for evaluation in result["policies"]
+            for condition in evaluation["conditions"]
+        ]
+        hidden_ids = [
+            condition["footnote_id"]
+            for evaluation in result["hidden_unlikely"]
+            for condition in evaluation["conditions"]
+        ]
+        self.assertTrue(min(hidden_ids) > max(basic_ids))
+
+    def test_발췌가_있으면_그_조건에만_원문이_붙는다(self):
+        sentence = "만 19세 이상 만 39세 이하 서울 거주 청년이 신청할 수 있다."
+        result = rules.evaluate_policies(
+            profile(), [policy(condition_sources={"age": sentence})], TODAY
+        )
+        conditions = result["policies"][0]["conditions"]
+        with_excerpt = [item for item in conditions if item["excerpt"]]
+        self.assertEqual(len(with_excerpt), 1)
+        self.assertEqual(with_excerpt[0]["name"], "나이")
 
 
 class UnknownItemTest(unittest.TestCase):
