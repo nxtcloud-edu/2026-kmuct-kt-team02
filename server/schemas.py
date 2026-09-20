@@ -149,7 +149,11 @@ class ProfileInput(ContractModel):
     """POST /session input; region is deliberately not client-provided."""
 
     age: Age
-    district: District
+    # 자치구는 선택 입력이다 (docs/01-glossary-profile.md 2장, docs/03-api-contract.md 2장).
+    # FR01 인수 기준도 필수 3개(나이·현재 상태·관심 분야)로 정해 두었다.
+    # 비우면 자치구 한정 정책이 미확인으로 남고 후속 질문으로 묻는다
+    # (rules/README.md 9장, AskableProfileField.DISTRICT).
+    district: District | None = None
     status: UserStatus
     categories: CategorySelection
     income_bracket: IncomeBracket = IncomeBracket.UNKNOWN

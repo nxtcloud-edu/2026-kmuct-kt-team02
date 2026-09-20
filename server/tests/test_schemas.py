@@ -75,10 +75,20 @@ def test_region_request_field_returns_422() -> None:
     assert response.json()["error"]["code"] == "invalid_input"
 
 
-def test_profile_requires_district() -> None:
+def test_profile_allows_missing_district() -> None:
+    """자치구는 선택 입력이다.
+
+    docs/01-glossary-profile.md 2장, docs/03-api-contract.md 2장, FR01 인수 기준("필수 3개")이
+    모두 선택으로 정해 두었다. 비우면 자치구 한정 정책이 미확인으로 남고 후속 질문으로 묻는다.
+    """
     profile_without_district = {
         key: value for key, value in VALID_PROFILE_INPUT.items() if key != "district"
     }
 
-    with pytest.raises(ValidationError):
-        ProfileInput.model_validate(profile_without_district)
+    profile = ProfileInput.model_validate(profile_without_district)
+    assert profile.district is None
+
+
+def test_profile_allows_explicit_null_district() -> None:
+    profile = ProfileInput.model_validate({**VALID_PROFILE_INPUT, "district": None})
+    assert profile.district is None

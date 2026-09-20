@@ -235,48 +235,37 @@ class RuleEngineAdapterTest(AdapterTestCase):
 
 @unittest.skipUnless(DEPENDENCIES_READY, "fastapi·pydantic 미설치 환경에서는 건너뛴다")
 class DistrictContractTest(unittest.TestCase):
-    """자치구 필수 여부가 문서와 코드에서 어긋난 상태를 고정해 둔다.
+    """자치구는 선택 입력이다.
 
-    문서: `district` 는 **선택** 입력이고 비우면 자치구 한정 정책이 미확인으로 남는다
-    (`docs/01-glossary-profile.md` 2장, `docs/03-api-contract.md` 2장, FR01 인수 기준
-    "필수 3개").
-    코드: `ProfileInput.district` 가 필수라 자치구 없는 Profile 을 만들 수 없다.
-
-    이 테스트는 어느 쪽이 옳다고 주장하지 않는다. 현재 상태를 기록해, 문서대로 되돌릴 때
-    무엇이 달라지는지 바로 보이게 한다 (notes/open-items.md).
+    `docs/01-glossary-profile.md` 2장, `docs/03-api-contract.md` 2장, FR01 인수 기준
+    "필수 3개" 가 모두 선택으로 정해 두었다. 한동안 `ProfileInput.district` 가 필수여서
+    대표 프로필 네 개와 자치구 후속 질문이 막혀 있었고, 그 상태를 되돌린 뒤의 계약을
+    여기서 고정한다.
     """
 
-    def test_현재_계약은_자치구_없는_프로필을_거부한다(self):
-        from pydantic import ValidationError
+    def test_자치구_없는_프로필을_받아들인다(self):
+        profile = Profile.model_validate(
+            {
+                "age": 23,
+                "district": None,
+                "status": "enrolled",
+                "categories": ["job"],
+                "income_bracket": "unknown",
+            }
+        )
+        self.assertIsNone(profile.district)
 
-        with self.assertRaises(ValidationError):
-            Profile.model_validate(
-                {
-                    "age": 23,
-                    "district": None,
-                    "status": "enrolled",
-                    "categories": ["job"],
-                    "income_bracket": "unknown",
-                }
-            )
-
-    def test_대표_프로필_네_개가_현재_계약에_걸린다(self):
-        from pydantic import ValidationError
-
+    def test_대표_프로필_다섯_개가_모두_계약을_통과한다(self):
         root = Path(__file__).resolve().parents[1]
         entries = json.loads(
             (root / "data" / "profiles" / "profiles.json").read_text(encoding="utf-8")
         )["profiles"]
-        blocked = []
         for entry in entries:
-            try:
-                Profile.model_validate(entry["profile"])
-            except ValidationError:
-                blocked.append(entry["id"])
-        self.assertEqual(blocked, ["P1", "P3", "P4", "P5"])
+            with self.subTest(profile=entry["id"]):
+                profile = Profile.model_validate(entry["profile"])
+                self.assertEqual(profile.region.value, "seoul")
 
-    def test_규칙_엔진은_자치구가_없어도_판정한다(self):
-        """판정 로직 자체는 문서대로 동작한다. 막히는 곳은 입력 계약이다."""
+    def test_규칙_엔진은_자치구가_없으면_미확인으로_두고_묻는다(self):
         from rules import conditions as cond
 
         condition, _ = cond.evaluate_region(
