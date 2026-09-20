@@ -49,6 +49,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
 
+from ai import envfile
 from ai.conversation import llm
 from ai.judgment import client as judgment_client
 
@@ -114,15 +115,32 @@ class GatewayConfig:
         )
 
 
+def _source(env: Optional[Mapping[str, str]]) -> Mapping[str, str]:
+    """설정을 읽을 곳. 환경변수와 저장소 루트 ``.env`` 를 합친다.
+
+    ``env`` 를 명시하면 **그것만** 쓴다. 테스트가 파일에 영향을 받으면, 개발자 로컬의
+    ``.env`` 때문에 통과하거나 실패하는 테스트가 생긴다.
+
+    환경변수가 파일보다 이긴다(``ai/envfile.py`` 독스트링). ``os.environ`` 을 바꾸지 않고
+    읽기만 하므로 이 호출이 프로세스 전역 상태를 건드리지 않는다.
+    """
+    if env is not None:
+        return env
+    try:
+        return envfile.merged()
+    except Exception:  # noqa: BLE001 - 파일 문제가 서버를 못 뜨게 하지 않는다
+        import os
+
+        return os.environ
+
+
 def missing_settings(env: Optional[Mapping[str, str]] = None) -> Tuple[str, ...]:
     """무엇이 없어서 모델을 부를 수 없는지.
 
     키를 넣었는데 모델이 안 불리는 상황에서 **가장 먼저 볼 값**이다. 조용한 건너뛰기를
     드러내는 것이 이 함수의 전부다.
     """
-    import os
-
-    source = env if env is not None else os.environ
+    source = _source(env)
     gaps = []
     if not _read(source, ENV_API_KEY):
         gaps.append(ENV_API_KEY[0])
@@ -136,10 +154,10 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Optional[GatewayConf
 
     ``None`` 을 돌려주는 이유: 키 없는 환경에서도 서버는 떠야 하고, AI 가 전부 실패해도
     규칙 기반 카드는 화면에 남아야 한다(``docs/03-api-contract.md`` 9장).
-    """
-    import os
 
-    source = env if env is not None else os.environ
+    ``env`` 를 주지 않으면 환경변수와 저장소 루트 ``.env`` 를 함께 본다. 환경변수가 이긴다.
+    """
+    source = _source(env)
     api_key = _read(source, ENV_API_KEY)
     model = _read(source, ENV_MODEL)
     if not api_key or not model:
