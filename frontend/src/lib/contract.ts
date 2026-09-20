@@ -110,10 +110,12 @@ export type District = (typeof DISTRICTS)[number];
 export interface ProfileInput {
   age: number;
   /**
-   * 자치구. server/schemas.py ProfileInput이 필수로 두고 null을 거부한다.
-   * docs/01-glossary-profile.md 2장은 아직 선택으로 적고 있어 서버 기준을 따른다.
+   * 자치구. 선택 입력이다 (docs/01-glossary-profile.md 2장, docs/03-api-contract.md 2장,
+   * server/schemas.py ProfileInput: `district: District | None = None`).
+   * FR01 인수 기준도 필수 3개(나이·현재 상태·관심 분야)로 정해 두었다.
+   * 비우면 자치구 한정 정책이 미확인으로 남고 후속 질문으로 묻는다.
    */
-  district: District;
+  district: District | null;
   status: UserStatus;
   categories: Category[];
   income_bracket: IncomeBracket;
