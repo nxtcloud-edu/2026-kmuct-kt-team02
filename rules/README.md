@@ -139,7 +139,7 @@ Pydantic 과 `server` 를 아는 곳은 `repository.py` 하나뿐이다. 그래�
 | `engine.py` | 판정 진입점 |
 | `repository.py` | 백엔드B 프로토콜 어댑터 |
 
-### 연결
+### 연결 — 백엔드B 가 할 일 (한 줄)
 
 ```python
 store, rule_engine = rules.repository.build("data/policies/policies.json")
@@ -147,7 +147,34 @@ app = create_app(rule_engine=rule_engine, policy_catalog=store)
 ```
 
 `PolicyStore` 가 `server/policy_repository.py` 의 `PolicyRepository`(`get`, `count_verified`)를,
-`RuleEngineAdapter` 가 `server/rule_engine.py` 의 `RuleEngine`(`evaluate`)을 만족한다.
+`RuleEngineAdapter` 가 `server/rule_engine.py` 의 `RuleEngine`(`evaluate`)과
+`server/api/policies.py` 가 부르는 `evaluate_policy` 를 만족한다.
+
+**연결 전 상태를 직접 확인했다.** `create_app()` 기본값으로는
+`/health` 가 `policy_dependency=unconnected`, `verified_policy_count=null` 을 돌려주고
+`/session` 은 503 "규칙 엔진 의존성이 연결되지 않았습니다" 로 끝난다.
+
+연결하면 다음이 동작한다 (실측).
+
+| 경로 | 결과 |
+| --- | --- |
+| `GET /health` | `verified_policy_count=5`, `policy_dependency=connected` |
+| `POST /session` | 200. 카드 3장(`likely` 2, `check` 1), `profile.region=seoul` |
+| `GET /policies/{id}` | 200. 조건별 판정·각주·출처·확인일 포함. 마감·분야 불일치 정책도 열린다 |
+| `PATCH /session/{id}/profile` | 200. 추가 항목을 넣으면 `check` → `likely` 로 바뀐다 |
+
+### `RuleEngine` Protocol 에 빠진 선언
+
+`server/api/policies.py` 53행이 `rule_engine.evaluate_policy(profile, policy)` 를 부르는데
+`server/rule_engine.py` 의 `RuleEngine` Protocol 에는 그 메서드가 없다.
+어댑터에는 구현해 두었으니 동작하지만, **Protocol 에 선언을 추가해야** 다른 구현체나
+테스트 더블이 같은 실수를 반복하지 않는다.
+
+```python
+class RuleEngine(Protocol):
+    def evaluate(self, profile: Profile, *, limit: int = 5) -> RuleEngineResult: ...
+    def evaluate_policy(self, profile: Profile, policy: Policy) -> PolicyEvaluation: ...
+```
 
 ### 계약 차이를 어댑터가 흡수한다
 

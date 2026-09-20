@@ -187,6 +187,35 @@ class RuleEngineAdapterTest(AdapterTestCase):
         result = adapter.evaluate(profile())
         self.assertEqual(len(result.policies), 5)
 
+    def test_정책_상세_판정을_돌려준다(self):
+        """`/policies/{id}` 가 부르는 경로. server/api/policies.py 53행."""
+        store, adapter = self.build([policy()])
+        found = store.get("SEOUL-001")
+        evaluation = adapter.evaluate_policy(profile(), found)
+        self.assertEqual(evaluation.policy_id, "SEOUL-001")
+        self.assertEqual(evaluation.status_label, "신청 가능성이 높아요")
+        self.assertGreaterEqual(evaluation.conditions[0].footnote_id, 1)
+
+    def test_상세는_후보_제외_규칙을_적용하지_않는다(self):
+        """마감됐거나 관심 분야가 달라도 상세는 열려야 한다."""
+        마감 = policy("SEOUL-001", apply_end="2026-09-19")
+        분야_불일치 = policy("SEOUL-002", categories=["housing"])
+        store, adapter = self.build([마감, 분야_불일치])
+
+        closed = adapter.evaluate_policy(profile(), store.get("SEOUL-001"))
+        self.assertEqual(closed.data_status.value, c.CLOSED)
+        self.assertEqual(closed.deadline.badge, "접수 마감")
+
+        mismatch = adapter.evaluate_policy(profile(), store.get("SEOUL-002"))
+        self.assertEqual(mismatch.policy_id, "SEOUL-002")
+
+    def test_없는_정책_상세는_사용_불가를_올린다(self):
+        store, adapter = self.build([policy("SEOUL-001")])
+        found = store.get("SEOUL-001")
+        found_copy = found.model_copy(update={"id": "SEOUL-999"})
+        with self.assertRaises(RuleEngineUnavailableError):
+            adapter.evaluate_policy(profile(), found_copy)
+
     def test_자치구가_있는_대표_프로필은_계약을_통과한다(self):
         root = Path(__file__).resolve().parents[1]
         entries = json.loads(

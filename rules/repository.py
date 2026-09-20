@@ -56,6 +56,10 @@ class PolicyStore:
         except ValidationError:
             return None
 
+    def raw(self, policy_id: str) -> dict | None:
+        """판정에 넘길 원본 dict. 규칙 엔진은 Pydantic 모델을 모른다."""
+        return self._by_id.get(policy_id)
+
     def count_verified(self) -> int:
         """`/health` 의 verified_policy_count."""
         return loader.count_verified(self.policies)
@@ -115,6 +119,33 @@ class RuleEngineAdapter:
             policies=policies,
             hidden_unlikely_count=outcome["hidden_unlikely_count"],
         )
+
+    def evaluate_policy(self, profile: Profile, policy: Policy) -> PolicyEvaluation:
+        """정책 한 건을 판정한다. `/policies/{id}` 상세가 부른다.
+
+        `server/api/policies.py` 가 이 메서드를 쓰지만 `RuleEngine` Protocol 에는
+        선언돼 있지 않다. Protocol 에 추가해 달라고 백엔드B 에 알려야 한다.
+        여기서는 호출부가 이미 있으므로 구현부터 맞춘다.
+
+        후보 제외 규칙을 적용하지 않는다. 사용자가 카드를 눌러 상세를 여는 경로이므로
+        관심 분야가 달라도, 마감됐어도 판정을 보여준다 (저장 목록과 같은 취급).
+        """
+        raw = self._store.raw(policy.id)
+        if raw is None:
+            raise RuleEngineUnavailableError(f"정책을 찾을 수 없습니다: {policy.id}")
+
+        evaluation, _ = engine.evaluate_policy(
+            profile.model_dump(mode="json"), raw, self._clock()
+        )
+        evaluation.pop("_match_count", None)
+        engine._assign_footnote_ids([evaluation])
+
+        try:
+            return PolicyEvaluation.model_validate(evaluation)
+        except ValidationError as error:
+            raise RuleEngineUnavailableError(
+                f"판정 결과가 계약과 어긋납니다: {error}"
+            ) from error
 
     def latest_hidden_unlikely(self) -> list[PolicyEvaluation]:
         """마지막 판정의 접힌 `unlikely` 목록.
