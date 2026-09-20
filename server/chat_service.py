@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Annotated, Protocol
 from uuid import UUID
 
 from pydantic import ConfigDict, Field
 
 from server.pii import PiiType
-from server.schemas import ContractModel, FollowupQuestion, Profile
-from server.sse import (
-    AnswerDeltaEventData,
-    FootnotesEventData,
-    PoliciesEventData,
-    ProfileUpdateEventData,
-    RelatedEventData,
-)
+from server.schemas import ContractModel, Profile
+from server.sse import SSEEventName
 
 
 class ChatPipelineRequest(ContractModel):
@@ -31,30 +27,21 @@ class ChatPipelineRequest(ContractModel):
     pii_notice: str | None = None
 
 
-class ChatPipelineResult(ContractModel):
-    """Semantic result plan; the API layer owns event ordering and sequence IDs."""
+@dataclass(frozen=True, slots=True)
+class ChatServiceEvent:
+    """One validated semantic event before SSE envelope encoding."""
 
-    profile_update: ProfileUpdateEventData | None = None
-    policies: PoliciesEventData
-    answer_deltas: Annotated[list[AnswerDeltaEventData], Field(min_length=1)]
-    footnotes: FootnotesEventData = Field(
-        default_factory=lambda: FootnotesEventData(footnotes=[])
-    )
-    followup: FollowupQuestion | None = None
-    related: RelatedEventData | None = None
+    event: SSEEventName
+    payload: object
 
-
-class RecoverableChatError(RuntimeError):
-    """Signals that the supplied fallback plan can safely finish with done."""
-
-    def __init__(self, fallback: ChatPipelineResult) -> None:
-        super().__init__("chat pipeline used a recoverable fallback")
-        self.fallback = fallback
+    def __post_init__(self) -> None:
+        if self.event == SSEEventName.DONE:
+            raise ValueError("done is owned by the SSE transport")
 
 
 class ChatService(Protocol):
-    """Async pipeline implemented by integrations or a deterministic test fake."""
+    """Async semantic stream implemented by Backend B or a test fake."""
 
-    async def run(self, request: ChatPipelineRequest) -> ChatPipelineResult:
-        """Return a result plan without controlling transport event order."""
+    def stream(self, request: ChatPipelineRequest) -> AsyncIterator[ChatServiceEvent]:
+        """Yield ordered events without request_id, seq, or done."""
         ...

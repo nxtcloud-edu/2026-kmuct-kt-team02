@@ -11,12 +11,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from server.chat_service import (
-    ChatPipelineRequest,
-    ChatPipelineResult,
-    ChatService,
-    RecoverableChatError,
-)
+from server.chat_service import ChatPipelineRequest, ChatService, ChatServiceEvent
 from server.errors import AppError, ErrorCode, ErrorResponse
 from server.pii import mask_pii
 from server.schemas import ChatRequest
@@ -51,55 +46,44 @@ async def _stream_chat(
     pipeline_request: ChatPipelineRequest,
     chat_service: ChatService,
 ) -> AsyncIterator[str]:
-    """Emit the fixed event order and cancel pipeline work on disconnect.
-
-    Starlette cancels the response body iterator when its ASGI disconnect
-    listener fires. This generator propagates that cancellation to the only
-    child task it creates and awaits cleanup before exiting.
-    """
+    """Envelope semantic events and cancel the active producer on disconnect."""
 
     started_at = time.perf_counter()
     build_frame = _frame_builder(request_id)
-    service_task: asyncio.Task[ChatPipelineResult] | None = None
+    service_stream = chat_service.stream(pipeline_request)
+    next_task: asyncio.Task[ChatServiceEvent] | None = None
+    completed = False
 
     try:
-        yield build_frame(SSEEventName.STATUS, {"stage": "searching"})
+        while True:
+            next_task = asyncio.create_task(
+                anext(service_stream),
+                name=f"chat-event-{request_id}",
+            )
+            try:
+                event = await next_task
+            except StopAsyncIteration:
+                next_task = None
+                completed = True
+                break
+            next_task = None
+            yield build_frame(event.event, event.payload)
 
-        service_task = asyncio.create_task(
-            chat_service.run(pipeline_request),
-            name=f"chat-pipeline-{request_id}",
-        )
-        try:
-            result = await service_task
-        except RecoverableChatError as exc:
-            result = exc.fallback
-
-        if result.profile_update is not None:
-            yield build_frame(SSEEventName.PROFILE_UPDATE, result.profile_update)
-
-        yield build_frame(SSEEventName.POLICIES, result.policies)
-        yield build_frame(SSEEventName.STATUS, {"stage": "summarizing"})
-
-        for delta in result.answer_deltas:
-            yield build_frame(SSEEventName.ANSWER_DELTA, delta)
-
-        yield build_frame(SSEEventName.FOOTNOTES, result.footnotes)
-
-        if result.followup is not None:
-            yield build_frame(SSEEventName.FOLLOWUP, result.followup)
-        if result.related is not None:
-            yield build_frame(SSEEventName.RELATED, result.related)
-
-        duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
-        yield build_frame(
-            SSEEventName.DONE,
-            {"total_duration_ms": duration_ms},
-        )
+        if completed:
+            duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+            yield build_frame(
+                SSEEventName.DONE,
+                {"total_duration_ms": duration_ms},
+            )
     finally:
-        if service_task is not None and not service_task.done():
-            service_task.cancel()
+        if next_task is not None and not next_task.done():
+            next_task.cancel()
             with suppress(asyncio.CancelledError):
-                await service_task
+                await next_task
+        close_stream = getattr(service_stream, "aclose", None)
+        if close_stream is not None:
+            with suppress(asyncio.CancelledError, RuntimeError):
+                await close_stream()
 
 
 @router.post(
