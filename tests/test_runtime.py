@@ -116,17 +116,26 @@ class TestMissingKey(unittest.TestCase):
         self.assertIsInstance(rt.gateway, llm.Gateway, "게이트웨이는 있어야 한다")
 
     def test_무엇이_없는지_missing_에_남는다(self):
-        """키를 넣었는데 안 돌 때 가장 먼저 볼 값이다."""
+        """키를 넣었는데 안 돌 때 가장 먼저 볼 값이다.
+
+        이름은 캠프 게이트웨이 기준이다(``ai/gateway.py``). 대회가 준 것이 Anthropic 키가
+        아니라 OpenAI 호환 게이트웨이라서, 안내하는 이름이 그쪽이어야 한다. 엉뚱한 이름을
+        알려 주면 키를 넣고도 안 도는 이유를 찾지 못한다.
+        """
+        from ai import gateway
+
         rt = runtime.for_turn({})
         self.assertIn(runtime.MISSING_ADAPTER, rt.missing)
-        self.assertIn("CLAUDE_API_KEY", rt.missing)
-        self.assertIn("CLAUDE_MODEL", rt.missing)
+        self.assertIn(gateway.ENV_API_KEY[0], rt.missing)
+        self.assertIn(gateway.ENV_MODEL[0], rt.missing)
 
     def test_모델_이름만_없어도_건너뛴다(self):
-        """지어낸 모델 이름은 런타임 404 다. 이름이 없으면 부르지 않는 것이 맞다."""
-        rt = runtime.for_turn({"CLAUDE_API_KEY": "k"})
+        """지어낸 모델 별칭은 403 이다. 이름이 없으면 부르지 않는 것이 맞다."""
+        from ai import gateway
+
+        rt = runtime.for_turn({"API_KEY": "sk-k"})
         self.assertFalse(rt.ready)
-        self.assertIn("CLAUDE_MODEL", rt.missing)
+        self.assertIn(gateway.ENV_MODEL[0], rt.missing)
 
     def test_깨진_환경에도_예외를_던지지_않는다(self):
         for label, env in (

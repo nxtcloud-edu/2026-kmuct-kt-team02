@@ -53,6 +53,10 @@ from dataclasses import dataclass, field as dataclass_field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ai import adapters
+# ``camp_gateway`` 로 별칭을 둔다. 이 파일에는 ``llm.Gateway`` 인스턴스를 담는 지역변수
+# ``gateway`` 가 있어서, 모듈 이름을 그대로 쓰면 지역변수가 모듈을 가려 UnboundLocalError 가
+# 난다. 그 예외는 어댑터 조립을 감싼 넓은 except 에 잡혀 **키가 있어도 모델을 건너뛴다.**
+from ai import gateway as camp_gateway
 from ai.conversation import llm
 
 # AI B 는 선택적으로 불러온다. ai/turn.py 와 같은 이유다. 판정 모듈 하나가 못 불러와졌다고
@@ -178,15 +182,23 @@ def for_turn(
     """
     missing: List[str] = []
 
+    # 캠프가 준 것은 Anthropic 키가 아니라 OpenAI 호환 게이트웨이다(``ai/gateway.py``).
+    # 그래서 게이트웨이를 **먼저** 본다. Anthropic 직접 호출 경로(``ai/adapters.py``)는
+    # 키를 따로 받는 경우를 위해 뒤에 남겨 둔다. 둘 다 없으면 모델을 건너뛴다.
+    if adapter is None:
+        try:
+            adapter = camp_gateway.adapter_from_env(env)
+        except Exception:  # noqa: BLE001 - 어댑터 조립 실패가 턴을 막지 않게
+            adapter = None
     if adapter is None:
         try:
             adapter = adapters.adapter_from_env(env)
-        except Exception:  # noqa: BLE001 - 어댑터 조립 실패가 턴을 막지 않게
+        except Exception:  # noqa: BLE001
             adapter = None
     if adapter is None:
         missing.append(MISSING_ADAPTER)
         try:
-            missing.extend(adapters.missing_settings(env))
+            missing.extend(camp_gateway.missing_settings(env))
         except Exception:  # noqa: BLE001
             pass
 
