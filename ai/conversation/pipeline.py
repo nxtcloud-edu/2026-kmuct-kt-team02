@@ -78,7 +78,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 
-from . import answer, fields, followup, interpret, llm, questions, related
+from . import answer, fields, followup, interpret, llm, prompts, questions, related
 
 # ---------------------------------------------------------------------------
 # 0. 단계 표 (docs/03-api-contract.md 9장)
@@ -557,11 +557,25 @@ ANSWER_RULE_SLOTS: Tuple[RuleSlot, ...] = (
 
 
 def _rules_text() -> str:
-    """규칙 블록 본문. 무엇이 들어갈 자리인지만 적고 문안은 비워 둔다."""
+    """규칙 블록 본문. 문안은 ``prompts`` 모듈에서 온다.
+
+    **문안이 없는 항목은 건너뛴다.** 이전에는 ``PROMPT_TODO`` 자리표시자를 넣었는데, 그것이
+    프롬프트에 실려 나가자 모델이 **빈 자리를 채워 주는 답변**을 냈다("규칙에 있는 빈 문안
+    슬롯을 먼저 정의하겠습니다"). 화면에 메타 대화가 나가는 고장이다. 자리표시자를 보내는
+    것보다 그 항목을 비우는 편이 안전하다 — 규칙 하나가 빠지면 ``validate`` 가 잡고
+    ``sanitize`` 가 고치지만, 자리표시자는 답변 전체를 망친다.
+
+    ``slot.what`` 은 남겨 둔다. 사람이 프롬프트를 읽을 때 이 항목이 무엇을 요구하는지
+    보이고, 문안이 그 요구와 어긋나면 눈에 띈다.
+    """
     lines: List[str] = []
     for slot in ANSWER_RULE_SLOTS:
-        lines.append(f"[{slot.id}] 들어갈 내용: {slot.what} (근거: {slot.doc_ref})")
-        lines.append(f"  {PROMPT_TODO}")
+        text = prompts.rule_text(slot.id)
+        if not text:
+            continue
+        lines.append(f"[{slot.id}] {slot.what}")
+        for line in text.splitlines():
+            lines.append(f"  {line}")
     return "\n".join(lines)
 
 
@@ -644,7 +658,11 @@ def _output_rules_text(skeleton: Any, footnote_ids: Sequence[int]) -> str:
     else:
         lines.append("[footnote_ids] 쓸 수 있는 각주 번호 없음")
 
-    lines.append(f"[output_format] {PROMPT_TODO}")
+    output_format = prompts.output_format_text()
+    if output_format:
+        lines.append("[output_format]")
+        for line in output_format.splitlines():
+            lines.append(f"  {line}")
     return "\n".join(lines)
 
 
@@ -689,8 +707,13 @@ def build_answer_prompt(
                 skeleton, _available_footnote_ids(policies, footnotes)
             ),
         )
+        # ``system`` 을 주지 않으면 ``prompts.ANSWER_SYSTEM`` 을 쓴다. 부르는 쪽이 매번
+        # 넘기게 하면 한 곳에서 빼먹는 순간 시스템 지시문 없이 모델이 불리고, 그 실패는
+        # "답변 말투가 이상하다" 정도로만 보인다. 기본값을 상수로 두면 캐시 접두사도 고정된다.
         return llm.assemble_prompt(
-            sections, system=system or "", cache_friendly=cache_friendly
+            sections,
+            system=system or prompts.ANSWER_SYSTEM,
+            cache_friendly=cache_friendly,
         )
     except Exception:  # noqa: BLE001 - 프롬프트 조립 실패가 카드를 지우지 않게
         # 규칙 블록만이라도 살린다. 이 프롬프트로 부르면 답변 품질은 떨어지지만,
