@@ -9,6 +9,7 @@ description = "FastAPI integration server for the SodaCookie MVP"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "anthropic==1.6.0",
     "fastapi==0.141.1",
     "pydantic==2.13.5",
     "uvicorn==0.53.0",
@@ -21,7 +22,10 @@ test = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["server*"]
+# rules 와 ai 도 포함해야 한다. server 만 담으면 `pip install .` 로 설치한 환경에
+# 규칙 엔진과 판정 모듈이 빠져 /session 이 503 으로만 응답한다. 로컬 테스트는
+# 아래 pythonpath 덕에 통과하므로 이 구멍은 설치 후에야 드러난다.
+include = ["server*", "rules*", "ai*"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

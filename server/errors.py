@@ -33,6 +33,16 @@ _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
 }
 
 
+def default_message(code: ErrorCode) -> str:
+    """오류 코드의 기본 사용자 문구.
+
+    SSE `error` 프레임도 JSON 오류 응답과 같은 문구를 써야 한다. 같은 상황에서 전송
+    방식에 따라 다른 말이 나오면 사용자는 다른 문제로 받아들인다. 문구를 복제하지 않고
+    이 함수로 가져간다.
+    """
+    return _DEFAULT_MESSAGES[code]
+
+
 class ValidationIssue(ContractModel):
     location: list[str | int]
     message: str

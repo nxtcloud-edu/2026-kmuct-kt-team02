@@ -35,8 +35,11 @@ class ChatServiceEvent:
     payload: object
 
     def __post_init__(self) -> None:
-        if self.event == SSEEventName.DONE:
-            raise ValueError("done is owned by the SSE transport")
+        # error 도 transport 소유다. 파이프라인은 예외를 올리기만 하고, 그것을 사용자 문구로
+        # 바꾸는 일은 스트림을 닫는 쪽(server/api/chat.py)이 한다. 양쪽에서 만들면 한 요청에
+        # 오류 프레임이 두 번 나갈 수 있다.
+        if self.event in {SSEEventName.DONE, SSEEventName.ERROR}:
+            raise ValueError(f"{self.event.value} is owned by the SSE transport")
 
 
 class ChatService(Protocol):

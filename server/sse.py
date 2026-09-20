@@ -9,6 +9,7 @@ from uuid import UUID
 
 from pydantic import Field, HttpUrl, JsonValue, TypeAdapter
 
+from server.errors import ErrorCode
 from server.schemas import (
     ContractModel,
     FollowupQuestion,
@@ -28,6 +29,10 @@ class SSEEventName(StrEnum):
     FOOTNOTES = "footnotes"
     FOLLOWUP = "followup"
     RELATED = "related"
+    # 부분 실패를 알린다 (docs/03-api-contract.md 5장). 이 프레임이 없던 동안에는
+    # 스트림 도중 예외가 나면 헤더가 이미 나간 뒤라 server/errors.py 핸들러가 닿지 못해
+    # 사용자에게 아무 설명 없이 끊긴 화면만 남았다.
+    ERROR = "error"
     DONE = "done"
 
 
@@ -73,6 +78,17 @@ class RelatedEventData(ContractModel):
     questions: Annotated[list[str], Field(max_length=3)]
 
 
+class ErrorEventData(ContractModel):
+    """부분 실패. 코드는 JSON 오류 응답과 같은 값을 쓴다.
+
+    이 프레임 뒤에도 `done` 을 보낸다. 계약이 "정상 또는 복구 가능한 fallback 종료"를
+    `done` 으로 정해 두었고, `done` 이 없으면 프론트가 입력창을 다시 열지 못한다.
+    """
+
+    code: ErrorCode
+    message: Annotated[str, Field(min_length=1)]
+
+
 class DoneEventData(ContractModel):
     total_duration_ms: Annotated[int, Field(strict=True, ge=0)]
 
@@ -112,6 +128,11 @@ class RelatedEvent(ContractModel):
     data: SSEEnvelope[RelatedEventData]
 
 
+class ErrorEvent(ContractModel):
+    event: Literal["error"] = "error"
+    data: SSEEnvelope[ErrorEventData]
+
+
 class DoneEvent(ContractModel):
     event: Literal["done"] = "done"
     data: SSEEnvelope[DoneEventData]
@@ -125,6 +146,7 @@ SSEEvent: TypeAlias = Annotated[
     | FootnotesEvent
     | FollowupEvent
     | RelatedEvent
+    | ErrorEvent
     | DoneEvent,
     Field(discriminator="event"),
 ]
