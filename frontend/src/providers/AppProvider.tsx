@@ -9,7 +9,7 @@ import {
 } from "react";
 import type { ProfileInput, SessionCreateResponse } from "@/lib/contract";
 import { STORAGE_KEYS, readJSON, removeKey, writeJSON } from "@/lib/storage";
-import { isMockMode } from "@/lib/api";
+import { createSession, isMockMode } from "@/lib/api";
 
 /** 로그인 계정. 이름과 연락처는 담지 않는다 */
 interface Auth {
@@ -33,6 +33,8 @@ interface AppContextValue {
   saveProfileInput: (input: ProfileInput) => void;
   setSession: (session: SessionCreateResponse | null) => void;
   clearSession: () => void;
+  /** 저장한 조건으로 맞춤 판정 세션을 만든다. 조건이 없으면 아무것도 하지 않는다 */
+  startSessionFromProfile: (input?: ProfileInput) => Promise<boolean>;
   signIn: (email: string, remember: boolean) => void;
   signOut: () => void;
   toast: Toast | null;
@@ -86,6 +88,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const clearSession = useCallback(() => setSessionState(null), []);
 
+  const startSessionFromProfile = useCallback(
+    async (input?: ProfileInput) => {
+      const target = input ?? profileInput;
+      if (!target) return false;
+      try {
+        const created = await createSession(target);
+        setSessionState(created);
+        return true;
+      } catch (error) {
+        showToast(
+          error instanceof Error ? error.message : "맞춤 안내를 준비하지 못했어요.",
+          "error",
+        );
+        return false;
+      }
+    },
+    [profileInput, showToast],
+  );
+
   const signIn = useCallback((email: string, remember: boolean) => {
     const next: Auth = { email };
     setAuth(next);
@@ -96,7 +117,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(() => {
     setAuth(null);
     removeKey(STORAGE_KEYS.auth);
-    showToast("로그아웃했어요.");
+    // 로그아웃하면 맞춤 판정을 이어갈 수 없으므로 세션을 버린다
+    setSessionState(null);
+    showToast("로그아웃했어요. 이제 공고 기준 안내만 보여드려요.");
   }, [showToast]);
 
   const value = useMemo<AppContextValue>(
@@ -109,6 +132,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       saveProfileInput,
       setSession,
       clearSession,
+      startSessionFromProfile,
       signIn,
       signOut,
       toast,
@@ -124,6 +148,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       saveProfileInput,
       setSession,
       clearSession,
+      startSessionFromProfile,
       signIn,
       signOut,
       toast,

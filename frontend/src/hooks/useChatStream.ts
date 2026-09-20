@@ -6,6 +6,12 @@ import {
   streamChat,
   type StreamController,
 } from "@/lib/api";
+import {
+  buildGuestAnswer,
+  buildGuestChips,
+  buildGuestFootnotes,
+  searchGuestPolicies,
+} from "@/lib/mock/guest";
 import { FOLLOWUP_FIELD_LABEL } from "@/lib/labels";
 import { ERROR_MESSAGE } from "@/lib/contract";
 import type {
@@ -13,6 +19,7 @@ import type {
   FollowupField,
   FollowupQuestion,
   PolicyEvaluation,
+  PolicyInfo,
   Profile,
   ProfileField,
   RelatedChip,
@@ -24,9 +31,7 @@ import type {
 export interface Turn {
   id: string;
   role: "user" | "agent";
-  /** 사용자 메시지 또는 답변 본문 */
   text: string;
-  /** 스트리밍이 끝났는지 */
   complete: boolean;
   stage?: Stage;
   footnotes: Footnote[];
@@ -43,22 +48,36 @@ function nextId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${turnSeq}`;
 }
 
-export function useChatStream(session: SessionCreateResponse) {
-  const [profile, setProfile] = useState<Profile>(session.profile);
-  const [policies, setPolicies] = useState<PolicyEvaluation[]>(session.policies);
-  const [hiddenCount, setHiddenCount] = useState(session.hidden_unlikely_count);
+function wait(ms: number, timers: number[]): Promise<void> {
+  return new Promise((resolve) => {
+    timers.push(window.setTimeout(resolve, ms));
+  });
+}
+
+/**
+ * 대화 상태.
+ *
+ * session이 있으면 프로필 기준으로 판정까지 받는 맞춤 모드다.
+ * session이 null이면 로그인 전이라 프로필이 없으므로 공고 기준 안내만 한다.
+ */
+export function useChatStream(session: SessionCreateResponse | null) {
+  const guest = session === null;
+
+  const [profile, setProfile] = useState<Profile | null>(session?.profile ?? null);
+  const [policies, setPolicies] = useState<PolicyInfo[]>(session?.policies ?? []);
+  const [hiddenCount, setHiddenCount] = useState(session?.hidden_unlikely_count ?? 0);
   const [hiddenPolicies, setHiddenPolicies] = useState<PolicyEvaluation[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [askedFields, setAskedFields] = useState<FollowupField[]>([]);
   const [changedFields, setChangedFields] = useState<ProfileField[]>([]);
-  /** 상태가 방금 바뀐 정책 */
   const [updatedIds, setUpdatedIds] = useState<string[]>([]);
-  /** 스크린리더에 알릴 짧은 메시지 */
   const [politeMessage, setPoliteMessage] = useState("");
   const [assertiveMessage, setAssertiveMessage] = useState("");
 
   const controllerRef = useRef<StreamController | null>(null);
+  const guestTimersRef = useRef<number[]>([]);
+  const guestCancelRef = useRef(false);
   const profileRef = useRef(profile);
   const askedRef = useRef(askedFields);
   const policiesRef = useRef(policies);
@@ -74,10 +93,17 @@ export function useChatStream(session: SessionCreateResponse) {
     policiesRef.current = policies;
   }, [policies]);
 
-  // 화면을 떠날 때 진행 중인 스트림을 정리한다
-  useEffect(() => () => controllerRef.current?.abort(), []);
+  // 화면을 떠날 때 진행 중인 작업을 정리한다
+  useEffect(
+    () => () => {
+      controllerRef.current?.abort();
+      guestCancelRef.current = true;
+      for (const timer of guestTimersRef.current) window.clearTimeout(timer);
+    },
+    [],
+  );
 
-  // 강조 표시는 2초 뒤에 지운다 (frontend/README.md 3-5, 3-9)
+  // 강조 표시는 2초 뒤에 지운다
   useEffect(() => {
     if (changedFields.length === 0 && updatedIds.length === 0) return;
     const timer = window.setTimeout(() => {
@@ -98,21 +124,97 @@ export function useChatStream(session: SessionCreateResponse) {
   }, []);
 
   /** 카드 상태가 바뀐 정책을 찾아 강조 대상으로 표시한다 */
-  const applyPolicies = useCallback((incoming: PolicyEvaluation[]) => {
+  const applyPolicies = useCallback((incoming: PolicyInfo[]) => {
     const before = new Map(
-      policiesRef.current.map((item) => [item.policy_id, item.status]),
+      policiesRef.current.map((item) => [
+        item.policy_id,
+        (item as PolicyEvaluation).status,
+      ]),
     );
     const changed = incoming
-      .filter((item) => before.has(item.policy_id) && before.get(item.policy_id) !== item.status)
+      .filter((item) => {
+        const status = (item as PolicyEvaluation).status;
+        return (
+          status !== undefined &&
+          before.has(item.policy_id) &&
+          before.get(item.policy_id) !== status
+        );
+      })
       .map((item) => item.policy_id);
 
     setPolicies(incoming);
     if (changed.length > 0) {
       setUpdatedIds(changed);
-      // 카드마다 알리지 않고 한 번만 알린다
       setPoliteMessage("조건이 갱신됐어요");
     }
   }, []);
+
+  const appendTurns = useCallback((text: string) => {
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: nextId("user"),
+        role: "user",
+        text,
+        complete: true,
+        footnotes: [],
+        followup: null,
+        related: [],
+      },
+      {
+        id: nextId("agent"),
+        role: "agent",
+        text: "",
+        complete: false,
+        stage: "searching",
+        footnotes: [],
+        followup: null,
+        related: [],
+      },
+    ]);
+  }, []);
+
+  /** 로그인 전: 공고 기준 안내만 문장 단위로 흘려 보낸다 */
+  const sendAsGuest = useCallback(
+    async (text: string) => {
+      guestCancelRef.current = false;
+      const timers = guestTimersRef.current;
+
+      patchLastAgent((turn) => ({ ...turn, stage: "searching" }));
+      setPoliteMessage("정책 찾는 중");
+      await wait(320, timers);
+      if (guestCancelRef.current) return;
+
+      const found = searchGuestPolicies(text);
+      const matched = found.length > 0 && text.trim().length > 0;
+      applyPolicies(found);
+      setHiddenCount(0);
+      setHiddenPolicies([]);
+
+      patchLastAgent((turn) => ({ ...turn, stage: "summarizing" }));
+      setPoliteMessage("정리 중");
+      await wait(220, timers);
+      if (guestCancelRef.current) return;
+
+      for (const sentence of buildGuestAnswer(found, matched)) {
+        if (guestCancelRef.current) return;
+        patchLastAgent((turn) => ({ ...turn, text: `${turn.text}${sentence}\n\n` }));
+        await wait(Math.min(240, 90 + sentence.length * 4), timers);
+      }
+      if (guestCancelRef.current) return;
+
+      patchLastAgent((turn) => ({
+        ...turn,
+        footnotes: buildGuestFootnotes(found),
+        related: buildGuestChips(found),
+        complete: true,
+        stage: undefined,
+      }));
+      setStreaming(false);
+      setPoliteMessage(`안내 완료. 제도 ${found.length}건을 보여드렸어요`);
+    },
+    [patchLastAgent, applyPolicies],
+  );
 
   const send = useCallback(
     (message: string) => {
@@ -122,29 +224,22 @@ export function useChatStream(session: SessionCreateResponse) {
       lastMessageRef.current = text;
       setStreaming(true);
       setAssertiveMessage("");
-      setPoliteMessage("정책 찾는 중");
+      appendTurns(text);
 
-      setTurns((prev) => [
-        ...prev,
-        { id: nextId("user"), role: "user", text, complete: true, footnotes: [], followup: null, related: [] },
-        {
-          id: nextId("agent"),
-          role: "agent",
-          text: "",
-          complete: false,
-          stage: "searching",
-          footnotes: [],
-          followup: null,
-          related: [],
-        },
-      ]);
+      if (guest || !session || !profileRef.current) {
+        void sendAsGuest(text);
+        return;
+      }
+
+      const currentProfile = profileRef.current;
+      setPoliteMessage("정책 찾는 중");
 
       void streamChat(
         {
           session_id: session.session_id,
           message: text,
           client_message_id: nextId("msg"),
-          profile: profileRef.current,
+          profile: currentProfile,
           askedFields: askedRef.current,
         },
         {
@@ -169,7 +264,7 @@ export function useChatStream(session: SessionCreateResponse) {
           onPolicies: ({ policies: incoming, hidden_unlikely_count }) => {
             applyPolicies(incoming);
             setHiddenCount(hidden_unlikely_count);
-            setHiddenPolicies(mockHiddenUnlikely(profileRef.current, text));
+            setHiddenPolicies(mockHiddenUnlikely(profileRef.current!, text));
           },
 
           onAnswerDelta: ({ delta }) =>
@@ -197,13 +292,10 @@ export function useChatStream(session: SessionCreateResponse) {
           onDone: () => {
             patchLastAgent((turn) => ({ ...turn, complete: true, stage: undefined }));
             setStreaming(false);
-            setPoliteMessage(
-              `답변 완료. 제도 ${policiesRef.current.length}개를 찾았어요`,
-            );
+            setPoliteMessage(`답변 완료. 제도 ${policiesRef.current.length}개를 찾았어요`);
           },
 
           onFailure: (failure) => {
-            // 카드는 그대로 두고 오류 문구만 붙인다
             patchLastAgent((turn) => ({
               ...turn,
               complete: true,
@@ -218,7 +310,7 @@ export function useChatStream(session: SessionCreateResponse) {
         controllerRef.current = controller;
       });
     },
-    [session.session_id, streaming, patchLastAgent, applyPolicies],
+    [guest, session, streaming, appendTurns, patchLastAgent, applyPolicies, sendAsGuest],
   );
 
   const retry = useCallback(() => {
@@ -228,17 +320,14 @@ export function useChatStream(session: SessionCreateResponse) {
     window.setTimeout(() => send(message), 0);
   }, [send]);
 
-  /**
-   * 후속 질문에 답한다.
-   * 목업 모드에서는 프로필에 값을 바로 넣고 결과를 다시 계산한다.
-   * 서버 모드에서는 답변을 메시지로 보내 서버가 프로필에 반영한다.
-   */
   const answerFollowup = useCallback(
     (field: FollowupField, value: unknown, label: string) => {
-      const nextProfile = applyFollowupAnswer(profileRef.current, field, value);
+      const current = profileRef.current;
+      if (!current) return;
+
+      const nextProfile = applyFollowupAnswer(current, field, value);
       setProfile(nextProfile);
       profileRef.current = nextProfile;
-      // planned_basis는 프로필 항목이 아니라 강조 대상에서 뺀다
       if (field !== "planned_basis") setChangedFields([field]);
       setAskedFields((prev) => (prev.includes(field) ? prev : [...prev, field]));
 
@@ -255,27 +344,11 @@ export function useChatStream(session: SessionCreateResponse) {
 
   const skipFollowup = useCallback(
     (field: FollowupField) => {
-      // 건너뛴 항목은 미확인으로 남기고 다시 묻지 않는다
       setAskedFields((prev) => (prev.includes(field) ? prev : [...prev, field]));
       patchLastAgent((turn) => ({ ...turn, followup: null }));
       setPoliteMessage("건너뛰었어요. 해당 조건은 확인이 필요해요로 남습니다");
     },
     [patchLastAgent],
-  );
-
-  /** 프로필을 직접 수정했을 때 (요약 바 수정) */
-  const updateProfile = useCallback(
-    (nextProfile: Profile, changed: ProfileField[]) => {
-      setProfile(nextProfile);
-      profileRef.current = nextProfile;
-      setChangedFields(changed);
-
-      const result = recalculate(nextProfile, lastMessageRef.current);
-      applyPolicies(result.policies);
-      setHiddenCount(result.hidden_unlikely_count);
-      setHiddenPolicies(mockHiddenUnlikely(nextProfile, lastMessageRef.current));
-    },
-    [applyPolicies],
   );
 
   const lastAgentIndex = useMemo(
@@ -284,6 +357,7 @@ export function useChatStream(session: SessionCreateResponse) {
   );
 
   return {
+    guest,
     profile,
     policies,
     hiddenCount,
@@ -299,6 +373,5 @@ export function useChatStream(session: SessionCreateResponse) {
     retry,
     answerFollowup,
     skipFollowup,
-    updateProfile,
   };
 }

@@ -7,8 +7,7 @@ import { cn } from "@/lib/cn";
 import { useApp } from "@/providers/AppProvider";
 
 const NAV_ITEMS = [
-  { to: "/", label: "홈" },
-  { to: "/chat", label: "AI 혜택 상담" },
+  { to: "/", label: "AI 혜택 상담" },
   { to: "/policies", label: "정책 모아보기" },
   { to: "/mypage", label: "마이페이지" },
 ] as const;
