@@ -109,7 +109,11 @@ export type District = (typeof DISTRICTS)[number];
  */
 export interface ProfileInput {
   age: number;
-  district?: District | null;
+  /**
+   * 자치구. server/schemas.py ProfileInput이 필수로 두고 null을 거부한다.
+   * docs/01-glossary-profile.md 2장은 아직 선택으로 적고 있어 서버 기준을 따른다.
+   */
+  district: District;
   status: UserStatus;
   categories: Category[];
   income_bracket: IncomeBracket;

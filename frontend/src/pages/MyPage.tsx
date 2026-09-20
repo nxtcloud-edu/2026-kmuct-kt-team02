@@ -24,10 +24,10 @@ import type {
 
 const COMPLETION_FIELDS = [
   { key: "age", label: "나이" },
+  { key: "district", label: "자치구" },
   { key: "status", label: "현재 상태" },
   { key: "categories", label: "관심 분야" },
   { key: "income_bracket", label: "가구 소득" },
-  { key: "district", label: "자치구" },
 ] as const;
 
 /**
@@ -70,10 +70,10 @@ export function MyPage() {
   const completion = useMemo(() => {
     const values: Record<string, unknown> = {
       age: ageValid ? ageNumber : "",
+      district,
       status,
       categories,
       income_bracket: income === "unknown" ? "" : income,
-      district,
     };
     const filled = COMPLETION_FIELDS.filter(({ key }) => {
       const value = values[key];
@@ -100,7 +100,10 @@ export function MyPage() {
     });
   };
 
-  const canSave = ageValid && status !== "" && categories.length > 0 && dirty && !saving;
+  /** 서버가 필수로 요구하는 네 항목이 모두 있어야 저장할 수 있다 */
+  const profileReady =
+    ageValid && district !== "" && status !== "" && categories.length > 0;
+  const canSave = profileReady && dirty && !saving;
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -108,11 +111,11 @@ export function MyPage() {
       setAgeError(`만 ${AGE_MIN}세부터 ${AGE_MAX}세까지 입력해 주세요`);
       return;
     }
-    if (status === "" || categories.length === 0) return;
+    if (district === "" || status === "" || categories.length === 0) return;
 
     const input: ProfileInput = {
       age: ageNumber,
-      district: district === "" ? null : district,
+      district,
       status,
       categories,
       income_bracket: income,
@@ -130,10 +133,11 @@ export function MyPage() {
 
   /** 저장한 조건으로 맞춤 판정을 시작하고 대화 화면으로 이동한다 */
   const startWithProfile = async () => {
-    if (!ageValid || status === "" || categories.length === 0) return;
+    // 여기서 만드는 값은 서버가 요구하는 필수 항목을 모두 채운 상태여야 한다
+    if (!ageValid || district === "" || status === "" || categories.length === 0) return;
     const input: ProfileInput = {
       age: ageNumber,
-      district: district === "" ? null : district,
+      district,
       status,
       categories,
       income_bracket: income,
@@ -213,11 +217,16 @@ export function MyPage() {
             <Button
               block
               className="mt-5"
-              disabled={!ageValid || status === "" || categories.length === 0}
+              disabled={!profileReady}
               onClick={() => void startWithProfile()}
             >
               이 조건으로 상담 시작
             </Button>
+            {!profileReady && (
+              <p className="mt-2 text-[0.875rem] text-ink-500">
+                나이, 자치구, 현재 상태, 관심 분야를 채우면 맞춤 판정을 받을 수 있어요.
+              </p>
+            )}
 
             {!auth && (
               <Link to="/login" className="mt-2 block rounded-xl focus-ring">
@@ -274,9 +283,10 @@ export function MyPage() {
 
               <SelectField
                 label="자치구"
-                hint="서울 거주 기준이에요. 선택하면 구 지원도 찾아봐요"
+                required
+                hint="서울 거주 기준이에요. 구에서 하는 지원도 함께 찾아봐요"
                 options={DISTRICT_OPTIONS}
-                placeholder="자치구 선택 안 함"
+                placeholder="자치구를 선택해 주세요"
                 value={district}
                 onChange={(event) => {
                   setDistrict(event.target.value as District | "");
