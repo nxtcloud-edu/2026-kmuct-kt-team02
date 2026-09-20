@@ -114,7 +114,13 @@
 
 ### 데이터 불변식: `exceptions_text` ⊂ `raw_text`
 
-판정 입력은 `exceptions_text`인데 대조 대상은 `raw_text`다. `exceptions_text`를 요약하거나 고쳐 적으면 그 정책의 **모든 발췌가 `not_found`로 떨어진다.** 정책 데이터를 적재할 때 `raw_text_covers()`로 미리 걸러야 한다. **백엔드A에 공유해야 하는 사항.**
+판정 입력은 `exceptions_text`인데 대조 대상은 `raw_text`다. `exceptions_text`를 요약하거나 고쳐 적으면 그 정책의 **모든 발췌가 `not_found`로 떨어진다.** 정책 데이터를 적재할 때 걸러야 한다. **백엔드A에 공유해야 하는 사항.**
+
+```bash
+python3 -m ai.judgment.data_check data/policies/staging.json
+```
+
+`raw_text` 유무, `exceptions_text` ⊂ `raw_text`, `condition_sources` 각 문장의 원문 포함, 출처·확인일 유무를 한 번에 본다. 문제가 있으면 종료 코드가 1이다. 인용 검증이 전건 실패하는 원인은 대부분 판정이 아니라 데이터라서, 데이터부터 본다.
 
 ### 통과율이 낮게 나오면
 
@@ -331,6 +337,7 @@ print(report.to_slide())
 | `metrics.py` | 지표를 슬라이드 한 장으로 모으기 | 12 |
 | `metrics-slide.md` | 숫자만 채우면 되는 슬라이드 틀 | 12 |
 | `integration.py` | 내부 조건을 API 조건 모양으로 변환 | 5~6 |
+| `data_check.py` | 정책 데이터가 인용 검증을 통과할 수 있는지 점검 | 6 |
 | `readiness.py` | 키·모델·SDK·평가 데이터 준비 상태 점검 | 13 |
 
 ### 쓰는 방법
@@ -398,6 +405,9 @@ print(report.summary())
 ```bash
 # 키·모델·SDK·평가 데이터 준비 상태 (값은 출력하지 않음)
 python3 -m ai.judgment.readiness
+
+# 정책 데이터가 인용 검증을 통과할 수 있는 상태인지
+python3 -m ai.judgment.data_check data/policies/staging.json
 
 # 평가 케이스 현황
 python3 -m ai.judgment
