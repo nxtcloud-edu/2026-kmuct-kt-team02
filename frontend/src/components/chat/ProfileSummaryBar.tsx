@@ -1,4 +1,3 @@
-import { Pencil } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { PROFILE_FIELD_LABEL, formatProfileValue } from "@/lib/labels";
 import { readProfileField, type Profile, type ProfileField } from "@/lib/contract";
@@ -28,12 +27,10 @@ const SUMMARY_FIELDS: ProfileField[] = [
 export function ProfileSummaryBar({
   profile,
   changedFields,
-  onEdit,
 }: {
   profile: Profile;
   /** 방금 바뀐 항목. 2초 동안 강조한다 */
   changedFields: ProfileField[];
-  onEdit: () => void;
 }) {
   const entries = SUMMARY_FIELDS.filter((field) => {
     const value = readProfileField(profile, field);
@@ -68,14 +65,6 @@ export function ProfileSummaryBar({
         })}
       </ul>
 
-      <button
-        type="button"
-        onClick={onEdit}
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-1.5 text-[0.875rem] font-semibold text-ink-700 transition-colors hover:border-line-strong hover:text-brand-700 focus-ring"
-      >
-        <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
-        수정
-      </button>
     </div>
   );
 }

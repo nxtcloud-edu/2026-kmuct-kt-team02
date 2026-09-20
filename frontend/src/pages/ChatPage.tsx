@@ -93,7 +93,6 @@ function ChatView({ ready }: { ready: boolean }) {
           <ProfileSummaryBar
             profile={chat.profile}
             changedFields={chat.changedFields}
-            onEdit={() => undefined}
           />
         </div>
       )}
