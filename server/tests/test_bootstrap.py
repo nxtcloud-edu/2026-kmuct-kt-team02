@@ -7,6 +7,7 @@
 
 import json
 from datetime import date
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -35,13 +36,15 @@ def build(env=None, policies_path=None):
 
 
 def test_default_policies_path_is_used_when_nothing_is_given() -> None:
-    assert str(resolve_policies_path(None, {})) == DEFAULT_POLICIES_PATH
+    # Path 로 비교한다. str() 은 Windows 에서 구분자가 `\` 로 바뀌어, 경로가 맞는데도
+    # 실패한다. 여기서 고정하려는 것은 구분자 표기가 아니라 "어느 파일을 읽는가" 다.
+    assert resolve_policies_path(None, {}) == Path(DEFAULT_POLICIES_PATH)
 
 
 def test_env_overrides_the_policies_path() -> None:
     resolved = resolve_policies_path(None, {POLICIES_PATH_ENV: "other/policies.json"})
 
-    assert str(resolved) == "other/policies.json"
+    assert resolved == Path("other/policies.json")
 
 
 def test_explicit_path_wins_over_env() -> None:

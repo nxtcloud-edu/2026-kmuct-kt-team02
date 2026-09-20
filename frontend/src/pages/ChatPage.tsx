@@ -300,15 +300,15 @@ function ChatView({ ready }: { ready: boolean }) {
 
                     {turn.complete && turn.related.length > 0 && (
                       <ul className="flex flex-wrap gap-2">
-                        {turn.related.map((chip) => (
-                          <li key={chip.id}>
+                        {turn.related.map((question) => (
+                          <li key={question}>
                             <button
                               type="button"
                               disabled={chat.streaming}
-                              onClick={() => chat.send(chip.text)}
+                              onClick={() => chat.send(question)}
                               className="rounded-full border border-line bg-white px-3 py-1.5 text-[0.875rem] font-medium text-ink-600 transition-colors hover:border-brand-300 hover:text-brand-700 disabled:opacity-55 focus-ring"
                             >
-                              {chip.text}
+                              {question}
                             </button>
                           </li>
                         ))}

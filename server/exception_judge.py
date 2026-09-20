@@ -36,10 +36,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from typing import Any
 
-from ai.gateway import GatewayClient
 from ai.judgment.judge import ExceptionJudge as AiBExceptionJudge
+from server.llm_client import build_gateway_client
 from server.orchestrator import ExceptionJudgeRequest
 
 _LOGGER = logging.getLogger(__name__)
@@ -117,6 +118,7 @@ class AiBExceptionJudgeAdapter:
         self,
         judge: Any | None = None,
         *,
+        env: Mapping[str, str] | None = None,
         policy_budget: float = DEFAULT_POLICY_BUDGET_S,
     ) -> None:
         if judge is not None:
@@ -126,8 +128,18 @@ class AiBExceptionJudgeAdapter:
         # api.anthropic.com 으로 직접 붙는다. 캠프가 주는 것은 OpenAI 호환
         # 게이트웨이라(.env.example) 그 경로는 401 로 끝나고, 화면에서는 그 실패가
         # "AI 가 고장났다"와 구별되지 않는다. 답변과 판정이 같은 게이트웨이를 써야 한다.
+        #
+        # `env` 를 받아 넘긴다. 이 자리가 `GatewayClient()` 였을 때는 조립하는 쪽이
+        # 어떤 환경을 주든 무시하고 실제 `os.environ` 과 저장소 `.env` 를 읽었다. 그래서
+        # 답변은 주입한 환경으로, 판정은 실제 환경으로 부르는 어긋남이 생겼고, 키 없는
+        # 환경을 가정한 테스트가 개발자 로컬의 `.env` 로 진짜 모델을 불렀다. 같은 요청의
+        # 두 AI 호출은 같은 설정을 봐야 한다.
+        #
+        # 답변 경로와 같은 호출기를 쓴다 (`server/llm_client.py`). SDK 기본 재시도가
+        # 켜져 있으면 6초 예산이 조용히 세 배로 늘어나 서버 8초 제한이 먼저 터지고,
+        # AI B 가 만든 부분 결과까지 버려진다.
         self._judge = AiBExceptionJudge(
-            GatewayClient(),
+            build_gateway_client(env),
             policy_budget=policy_budget,
             batch_budget=policy_budget,
         )

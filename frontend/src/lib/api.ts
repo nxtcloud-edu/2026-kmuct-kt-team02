@@ -22,8 +22,10 @@ import type {
   FollowupQuestion,
   FootnotesPayload,
   PoliciesPayload,
+  PolicyEvaluation,
   Profile,
   ProfileInput,
+  ProfilePatch,
   ProfileUpdatePayload,
   RelatedPayload,
   SSEEnvelope,
@@ -116,6 +118,37 @@ export async function createSession(
 }
 
 /* ------------------------------------------------------------------ *
+ * PATCH /session/{session_id}/profile
+ * ------------------------------------------------------------------ */
+
+/**
+ * 프로필 항목 하나를 서버에 반영하고 다시 계산한 결과를 받는다.
+ *
+ * 후속 질문에 답하면 판정이 달라진다. 목업 모드는 브라우저에서 다시 계산할 수 있지만
+ * 서버가 붙은 뒤에는 판정 주체가 서버(rule_engine)이므로 여기로 보내야 한다.
+ * 목업 모드에서는 호출하지 않는다 (호출 전에 isMockMode로 갈라진다).
+ */
+export async function updateSessionProfile(
+  sessionId: string,
+  patch: ProfilePatch,
+): Promise<SessionCreateResponse> {
+  const { api_base_url } = await loadConfig();
+  if (!api_base_url) throw new Error(ERROR_MESSAGE.server_error);
+
+  const response = await fetch(
+    `${api_base_url}/session/${encodeURIComponent(sessionId)}/profile`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
+
+  if (!response.ok) throw new Error(await toErrorMessage(response));
+  return (await response.json()) as SessionCreateResponse;
+}
+
+/* ------------------------------------------------------------------ *
  * POST /chat (스트리밍)
  * ------------------------------------------------------------------ */
 
@@ -156,8 +189,10 @@ export async function streamChat(
   if (!api_base_url) return startMockStream(options, handlers);
 
   const controller = new AbortController();
+  // done을 못 받고 끊기면 화면이 진행 표시에 그대로 멈춘다. 종료를 한 번은 알려야 한다
+  let finished = false;
 
-  void fetchEventSource(`${api_base_url}/chat`, {
+  const stream = fetchEventSource(`${api_base_url}/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -183,7 +218,12 @@ export async function streamChat(
       } catch {
         return;
       }
+      if (event.event === "done") finished = true;
       dispatch(event.event, envelope.payload, handlers);
+    },
+    // 서버는 오류가 나도 done을 보낸다 (server/api/chat.py). done 없이 닫혔다면 연결이 끊긴 것이다
+    onclose: () => {
+      if (!finished) handlers.onFailure(ERROR_MESSAGE.server_error);
     },
     onerror: (error) => {
       const message =
@@ -193,6 +233,9 @@ export async function streamChat(
       throw error;
     },
   });
+
+  // onerror가 throw하면 위 Promise가 reject된다. 실패는 이미 onFailure로 알렸으므로 여기서 삼킨다
+  void stream.catch(() => undefined);
 
   return { abort: () => controller.abort() };
 }
@@ -291,8 +334,8 @@ function startMockStream(
         handlers.onFollowup(followup);
       }
 
-      const related = buildRelated(result.policies);
-      if (related.length > 0) handlers.onRelated({ chips: related });
+      const questions = buildRelated(result.policies);
+      if (questions.length > 0) handlers.onRelated({ questions });
 
       handlers.onDone({
         total_duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
@@ -313,28 +356,76 @@ function startMockStream(
 }
 
 /**
- * 목업 모드에서 후속 질문 답변을 프로필에 반영한다.
- * planned_basis는 프로필 항목이 아니므로 넣지 않는다 (docs/03-api-contract.md 3장).
+ * 후속 질문 답변을 프로필에 반영한다.
+ * FollowupField는 전부 프로필 항목이다 (server/schemas.py AskableProfileField).
  */
 export function applyFollowupAnswer(
   profile: Profile,
   field: FollowupField,
   value: unknown,
 ): Profile {
-  if (field === "planned_basis") return profile;
   return { ...profile, [field]: value } as Profile;
 }
 
-/** 목업 모드에서 프로필 변경 후 결과를 다시 계산한다 */
-export function recalculate(profile: Profile, query = ""): PoliciesPayload {
-  const result = mockEvaluate(profile, query);
-  return {
-    policies: result.policies,
-    hidden_unlikely_count: result.hidden_unlikely_count,
-  };
+/**
+ * 접힌 영역에 보여 줄 unlikely 목록.
+ *
+ * 서버 `policies` 이벤트는 개수(`hidden_unlikely_count`)만 내려주고 목록은 주지 않는다
+ * (server/sse.py PoliciesEventData). 그래서 실제 모드에서는 빈 배열이다. 목업 모드에서만
+ * 브라우저가 계산한 목록을 채운다.
+ */
+export async function hiddenUnlikelyPolicies(
+  profile: Profile,
+  query = "",
+): Promise<PolicyEvaluation[]> {
+  if (!(await isMockMode())) return [];
+  return mockEvaluate(profile, query).hidden_unlikely;
 }
 
-/** 접힌 영역에 보여줄 unlikely 목록 (목업 전용) */
-export function mockHiddenUnlikely(profile: Profile, query = "") {
-  return mockEvaluate(profile, query).hidden_unlikely;
+/** 후속 질문 답변을 반영한 결과 */
+export interface FollowupAnswerResult {
+  profile: Profile;
+  policies: PolicyEvaluation[];
+  hidden_unlikely_count: number;
+  /** 실제 모드에서는 서버가 목록을 주지 않으므로 비어 있다 */
+  hidden_unlikely: PolicyEvaluation[];
+}
+
+/**
+ * 후속 질문 답변을 프로필에 반영하고 판정을 다시 받는다.
+ *
+ * 판정 주체가 모드마다 다르다. 실제 모드에서는 서버 rule_engine이 유일한 판정 주체이므로
+ * PATCH /session/{id}/profile로 보내고 그 응답을 그대로 쓴다. 브라우저에서 따로 계산하면
+ * 같은 프로필로 서로 다른 판정이 화면에 남는다.
+ */
+export async function submitFollowupAnswer(options: {
+  session_id: string;
+  profile: Profile;
+  field: FollowupField;
+  value: unknown;
+  /** 목업 재계산에서 관련도 정렬에 쓰는 마지막 질문 */
+  query?: string;
+}): Promise<FollowupAnswerResult> {
+  const nextProfile = applyFollowupAnswer(options.profile, options.field, options.value);
+
+  if (await isMockMode()) {
+    const result = mockEvaluate(nextProfile, options.query ?? "");
+    return {
+      profile: nextProfile,
+      policies: result.policies,
+      hidden_unlikely_count: result.hidden_unlikely_count,
+      hidden_unlikely: result.hidden_unlikely,
+    };
+  }
+
+  const updated = await updateSessionProfile(options.session_id, {
+    [options.field]: options.value,
+  } as ProfilePatch);
+
+  return {
+    profile: updated.profile,
+    policies: updated.policies,
+    hidden_unlikely_count: updated.hidden_unlikely_count,
+    hidden_unlikely: [],
+  };
 }

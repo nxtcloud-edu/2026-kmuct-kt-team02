@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 
@@ -51,6 +51,10 @@ _LOGGER = logging.getLogger(__name__)
 #: 정책 데이터 경로. 저장소 루트 기준 상대 경로다.
 DEFAULT_POLICIES_PATH = "data/policies/policies.json"
 POLICIES_PATH_ENV = "POLICIES_PATH"
+
+#: `LLM_ADAPTER` 가 비었지만 게이트웨이 설정이 다 있을 때 `/health` 가 보고할 이름.
+#: 비밀이 아니다. 실제 모델 별칭(`LLM_MODEL`)이나 키는 여기 담지 않는다.
+_GATEWAY_ADAPTER_NAME = "gateway"
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +108,15 @@ def build_dependencies(
     session_store = SessionStore(ttl_seconds=resolved_settings.session_ttl_seconds)
     gaps = missing_settings(env)
 
+    if not gaps and resolved_settings.llm_adapter_name is None:
+        # `/health` 의 `llm_adapter_configured` 가 `LLM_ADAPTER` 만 본다. 그 이름은
+        # `.env.example` 에 남은 옛 설정이고, 실제로 모델을 부를 수 있게 하는 값은
+        # `API_KEY` 와 `LLM_MODEL` 이다 (`ai/gateway.py`). 그래서 키를 제대로 넣고
+        # 모델이 답을 만들고 있는데도 `/health` 는 false 라고 답했다. 운영자가 "AI 가 왜
+        # 안 불리지" 를 볼 때 가장 먼저 보는 값이 반대로 말하면 원인을 엉뚱한 곳에서 찾는다.
+        # 부를 수 있으면 부를 수 있다고 말하게 한다. 키 값은 담지 않는다 — 이름만 둔다.
+        resolved_settings = replace(resolved_settings, llm_adapter_name=_GATEWAY_ADAPTER_NAME)
+
     if store.issues:
         # 한 건이 잘못돼도 나머지는 살린다. 몇 건이 빠졌는지는 보여야 한다.
         _LOGGER.warning(
@@ -139,7 +152,9 @@ def build_dependencies(
         llm_client=GatewayLLMClient(env=env),
         rule_engine=rule_engine,
         policy_sources=store,
-        exception_judge=AiBExceptionJudgeAdapter(),
+        # 답변과 같은 환경을 읽어야 한다. `env` 를 빼면 조립하는 쪽이 준 환경을 무시하고
+        # 실제 `os.environ` 과 저장소 `.env` 를 읽는다 (`server/exception_judge.py`).
+        exception_judge=AiBExceptionJudgeAdapter(env=env),
         # 앱과 같은 저장소를 써야 한다. 다른 것을 주면 대화 중 프로필 변경이
         # PATCH /session 결과와 어긋나고, 그 어긋남은 오류 없이 일어난다.
         session_store=session_store,

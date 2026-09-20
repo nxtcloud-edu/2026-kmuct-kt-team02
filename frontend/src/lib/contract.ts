@@ -134,6 +134,13 @@ export interface Profile extends ProfileInput {
   last_gpa?: LastGpa | null;
 }
 
+/**
+ * PATCH /session/{session_id}/profile 요청 본문.
+ * 보낸 항목만 덮어쓴다 (server/schemas.py ProfilePatch, exclude_unset).
+ * region은 서버가 고정하므로 보내지 않는다.
+ */
+export type ProfilePatch = Partial<Omit<Profile, "region">>;
+
 /** 프로필에서 항목 값을 안전하게 꺼낸다 */
 export function readProfileField(profile: Profile, field: ProfileField): unknown {
   return (profile as unknown as Record<string, unknown>)[field];
@@ -146,12 +153,10 @@ export function readProfileField(profile: Profile, field: ProfileField): unknown
 export interface ConditionEvaluation {
   /**
    * 조건 요약. 20자 이내 명사형.
-   * 이름이 아직 확정되지 않아 `name`과 `summary`가 둘 다 올 수 있다
-   * (docs/03-api-contract.md 4-1: "조건 요약 키 이름은 12:00 통합 때 확정된다").
-   * 읽을 때는 conditionName()을 쓴다.
+   * 서버는 `name` 한 키만 보낸다 (server/schemas.py ConditionEvaluation,
+   * ContractModel이 extra="forbid"라 `summary`는 아예 통과하지 못한다).
    */
-  name?: string;
-  summary?: string;
+  name: string;
   result: ConditionResult;
   judged_by: JudgedBy;
   /** 공고 원문 발췌 10~150자. 인용 검증 통과한 것만 */
@@ -159,13 +164,18 @@ export interface ConditionEvaluation {
   source_url: string;
   /** 각주 번호. 답변 본문의 번호와 같다 */
   footnote_id: number;
-  /** result가 unknown일 때만. 기본 항목과 추가 항목 모두 올 수 있다 */
-  needed_field?: ProfileField | "공고 확인 필요" | null;
+  /**
+   * result가 unknown일 때만.
+   * 대화로 물을 수 있는 항목이거나 "공고 확인 필요"다
+   * (server/schemas.py: `AskableProfileField | Literal["공고 확인 필요"] | None`).
+   * age·status·categories는 여기로 오지 않는다.
+   */
+  needed_field?: AskableProfileField | "공고 확인 필요" | null;
 }
 
-/** 조건 요약을 읽는다. 두 키 중 온 것을 쓴다. */
+/** 조건 요약을 읽는다. 빈 값이 와도 화면이 비지 않게 기본 문구를 둔다. */
 export function conditionName(condition: ConditionEvaluation): string {
-  return condition.name ?? condition.summary ?? "조건";
+  return condition.name || "조건";
 }
 
 export interface Deadline {
@@ -227,11 +237,13 @@ export interface FollowupOption {
 
 /**
  * 후속 질문이 묻는 대상.
- * 프로필 항목이거나, 기준 시점을 묻는 `planned_basis`다.
- * `planned_basis`는 프로필 항목이 아니라 세션에만 기록된다
- * (docs/03-api-contract.md 3장).
+ *
+ * 서버 계약은 대화로 물을 수 있는 프로필 항목만 허용한다
+ * (server/schemas.py FollowupQuestion: `field: AskableProfileField`).
+ * docs/03-api-contract.md 3장이 말하는 `planned_basis`는 서버 enum에 없어서
+ * 실제로는 내려올 수 없다. 받을 수 없는 값을 타입에 두면 처리 분기만 남으므로 뺀다.
  */
-export type FollowupField = AskableProfileField | "planned_basis";
+export type FollowupField = AskableProfileField;
 
 export interface FollowupQuestion {
   field: FollowupField;
@@ -276,23 +288,26 @@ export interface StatusPayload {
   stage: Stage;
 }
 
-/** 프로필 변경 한 건 (docs/03-api-contract.md 5-3) */
-export interface ProfileChange {
-  field: ProfileField;
-  /** 바뀌기 전 값. 없던 항목이면 비어 있다 */
-  before?: unknown;
-  after: unknown;
-  /** after의 화면 문구. categories는 비어 있다 */
-  label?: string | null;
-  /** 이 변경에 붙는 안내 문구 */
-  notice?: string | null;
-}
+/**
+ * 바뀐 항목과 바뀐 뒤 값.
+ *
+ * 서버는 변경 목록이 아니라 맵으로 보낸다
+ * (server/sse.py ProfileUpdateEventData: `changed_fields: dict[ProfileField, JsonValue]`).
+ * 이전 값은 내려오지 않는다. 값은 이미 `profile`에도 들어 있으므로 화면에서는
+ * 어떤 항목이 바뀌었는지(키)만 쓴다.
+ */
+export type ChangedFields = Partial<Record<ProfileField, unknown>>;
 
 export interface ProfileUpdatePayload {
-  changes: ProfileChange[];
+  changed_fields: ChangedFields;
   /** 대화에 붙일 안내 한 줄 */
-  notice: string;
+  message: string;
   profile: Profile;
+}
+
+/** changed_fields의 키를 프로필 항목 목록으로 읽는다 */
+export function changedFieldList(changed: ChangedFields): ProfileField[] {
+  return Object.keys(changed) as ProfileField[];
 }
 
 export interface PoliciesPayload {
@@ -317,14 +332,15 @@ export interface FootnotesPayload {
   footnotes: Footnote[];
 }
 
-/** 관련 질문 칩 (docs/03-api-contract.md 5-2). 화면에는 text만 쓴다 */
-export interface RelatedChip {
-  id: string;
-  text: string;
-}
-
+/**
+ * 관련 질문 (docs/03-api-contract.md 5-2).
+ *
+ * 서버는 id 없는 문자열 배열을 최대 3개 보낸다
+ * (server/sse.py RelatedEventData: `questions: list[str]`).
+ * server/orchestrator_adapters.py가 AI의 `chips[].text`만 뽑아 이 모양으로 바꾼다.
+ */
 export interface RelatedPayload {
-  chips: RelatedChip[];
+  questions: string[];
 }
 
 /** 부분 실패 이벤트 */
@@ -344,6 +360,7 @@ export interface DonePayload {
 export type ErrorCode =
   | "invalid_input"
   | "session_expired"
+  | "policy_not_found"
   | "server_error"
   | "answer_failed";
 
@@ -367,6 +384,7 @@ export interface ErrorResponse {
 export const ERROR_MESSAGE: Record<ErrorCode, string> = {
   invalid_input: "입력한 정보를 다시 확인해 주세요",
   session_expired: "시간이 지나 처음부터 다시 시작할게요",
+  policy_not_found: "정책을 찾을 수 없어요",
   server_error: "잠시 문제가 생겼어요. 다시 시도해 주세요",
   answer_failed: "설명을 불러오지 못했어요. 카드에서 조건을 확인해 주세요",
 };

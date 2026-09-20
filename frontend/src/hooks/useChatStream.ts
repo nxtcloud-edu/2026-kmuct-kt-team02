@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  applyFollowupAnswer,
-  mockHiddenUnlikely,
-  recalculate,
+  hiddenUnlikelyPolicies,
   streamChat,
+  submitFollowupAnswer,
   type StreamController,
 } from "@/lib/api";
 import {
@@ -13,7 +12,7 @@ import {
   searchGuestPolicies,
 } from "@/lib/mock/guest";
 import { FOLLOWUP_FIELD_LABEL } from "@/lib/labels";
-import { ERROR_MESSAGE } from "@/lib/contract";
+import { ERROR_MESSAGE, changedFieldList } from "@/lib/contract";
 import type {
   Footnote,
   FollowupField,
@@ -22,7 +21,6 @@ import type {
   PolicyInfo,
   Profile,
   ProfileField,
-  RelatedChip,
   SessionCreateResponse,
   Stage,
 } from "@/lib/contract";
@@ -36,7 +34,8 @@ export interface Turn {
   stage?: Stage;
   footnotes: Footnote[];
   followup: FollowupQuestion | null;
-  related: RelatedChip[];
+  /** 관련 질문. 서버가 문자열 배열로 보낸다 (server/sse.py RelatedEventData) */
+  related: string[];
   /** 프로필 변경 안내 한 줄 */
   profileNotice?: string;
   error?: string;
@@ -254,17 +253,18 @@ export function useChatStream(session: SessionCreateResponse | null) {
             );
           },
 
-          onProfileUpdate: ({ changes, notice, profile: nextProfile }) => {
+          onProfileUpdate: ({ changed_fields, message, profile: nextProfile }) => {
             setProfile(nextProfile);
             profileRef.current = nextProfile;
-            setChangedFields(changes.map((change) => change.field));
-            patchLastAgent((turn) => ({ ...turn, profileNotice: notice }));
+            setChangedFields(changedFieldList(changed_fields));
+            patchLastAgent((turn) => ({ ...turn, profileNotice: message }));
           },
 
           onPolicies: ({ policies: incoming, hidden_unlikely_count }) => {
             applyPolicies(incoming);
             setHiddenCount(hidden_unlikely_count);
-            setHiddenPolicies(mockHiddenUnlikely(profileRef.current!, text));
+            // 서버는 개수만 준다. 목록은 목업 모드에서만 채워진다
+            void hiddenUnlikelyPolicies(profileRef.current!, text).then(setHiddenPolicies);
           },
 
           onAnswerDelta: ({ delta }) =>
@@ -280,8 +280,8 @@ export function useChatStream(session: SessionCreateResponse | null) {
             );
           },
 
-          onRelated: ({ chips }) =>
-            patchLastAgent((turn) => ({ ...turn, related: chips })),
+          onRelated: ({ questions }) =>
+            patchLastAgent((turn) => ({ ...turn, related: questions })),
 
           // 부분 실패. 카드는 그대로 두고 오류 문구만 붙인다
           onStreamError: ({ message: reason }) => {
@@ -325,21 +325,36 @@ export function useChatStream(session: SessionCreateResponse | null) {
       const current = profileRef.current;
       if (!current) return;
 
-      const nextProfile = applyFollowupAnswer(current, field, value);
-      setProfile(nextProfile);
-      profileRef.current = nextProfile;
-      if (field !== "planned_basis") setChangedFields([field]);
       setAskedFields((prev) => (prev.includes(field) ? prev : [...prev, field]));
-
-      const result = recalculate(nextProfile, lastMessageRef.current);
-      applyPolicies(result.policies);
-      setHiddenCount(result.hidden_unlikely_count);
-      setHiddenPolicies(mockHiddenUnlikely(nextProfile, lastMessageRef.current));
-
       patchLastAgent((turn) => ({ ...turn, followup: null }));
-      send(`${FOLLOWUP_FIELD_LABEL[field]}는 ${label}이에요`);
+
+      // 판정을 다시 받는다. 실제 모드는 서버가, 목업 모드는 브라우저가 계산한다
+      void submitFollowupAnswer({
+        session_id: session?.session_id ?? "",
+        profile: current,
+        field,
+        value,
+        query: lastMessageRef.current,
+      })
+        .then((result) => {
+          setProfile(result.profile);
+          profileRef.current = result.profile;
+          setChangedFields([field]);
+          applyPolicies(result.policies);
+          setHiddenCount(result.hidden_unlikely_count);
+          setHiddenPolicies(result.hidden_unlikely);
+        })
+        .catch((error: unknown) => {
+          // 반영에 실패하면 화면 값을 바꾸지 않는다. 판정과 프로필이 어긋나는 게 더 나쁘다
+          setAssertiveMessage(
+            error instanceof Error ? error.message : ERROR_MESSAGE.server_error,
+          );
+        })
+        .finally(() => {
+          send(`${FOLLOWUP_FIELD_LABEL[field]}는 ${label}이에요`);
+        });
     },
-    [send, patchLastAgent, applyPolicies],
+    [session, send, patchLastAgent, applyPolicies],
   );
 
   const skipFollowup = useCallback(

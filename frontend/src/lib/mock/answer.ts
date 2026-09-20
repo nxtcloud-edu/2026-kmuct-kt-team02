@@ -20,8 +20,6 @@ import type {
   FollowupQuestion,
   PolicyEvaluation,
   Profile,
-  ProfileField,
-  RelatedChip,
 } from "../contract";
 
 /* ------------------------------------------------------------------ *
@@ -135,8 +133,8 @@ const FOLLOWUP_TEMPLATES: Partial<Record<AskableProfileField, FollowupTemplate>>
   },
 };
 
-/** 물을 수 있는 항목이고 질문 문구가 준비된 항목인지 */
-function isAskable(field: ProfileField): field is AskableProfileField {
+/** 질문 문구가 준비된 항목인지 (템플릿에 없는 항목은 물을 수 없다) */
+function hasTemplate(field: AskableProfileField): boolean {
   return Object.prototype.hasOwnProperty.call(FOLLOWUP_TEMPLATES, field);
 }
 
@@ -159,8 +157,8 @@ export function pickFollowup(
       const needed = condition.needed_field;
       // 공고를 직접 확인해야 하는 조건은 물을 수 없다
       if (!needed || needed === "공고 확인 필요") continue;
-      // needed_field에는 기본 항목도 올 수 있지만, 물을 수 있는 항목만 후속 질문으로 낸다
-      if (!isAskable(needed)) continue;
+      // 질문 문구가 없는 항목은 후속 질문으로 내지 않는다
+      if (!hasTemplate(needed)) continue;
       if (askedFields.includes(needed)) continue;
       // 이미 값이 있는 항목은 묻지 않는다
       if (readProfileField(profile, needed)) continue;
@@ -274,20 +272,24 @@ export function buildAnswer(policies: PolicyEvaluation[]): string[] {
   return sentences;
 }
 
-/** 관련 질문 칩 (P1). 최대 3개. id는 화면에 쓰지 않고 중복 방지에만 쓴다 */
-export function buildRelated(policies: PolicyEvaluation[]): RelatedChip[] {
-  const chips: RelatedChip[] = [];
+/**
+ * 관련 질문 (P1). 최대 3개.
+ * 서버 `related` 이벤트와 같은 모양(문자열 배열)으로 돌려준다
+ * (server/sse.py RelatedEventData: `questions: list[str]`, 최대 3개).
+ */
+export function buildRelated(policies: PolicyEvaluation[]): string[] {
+  const questions: string[] = [];
   if (policies.some((item) => item.status === "check")) {
-    chips.push({ id: "income_check_howto", text: "소득 기준 확인하는 방법 알려줘" });
+    questions.push("소득 기준 확인하는 방법 알려줘");
   }
   if (policies.some((item) => item.status === "unlikely")) {
-    chips.push({ id: "why_unlikely", text: "조건이 안 맞는 이유가 뭐야?" });
+    questions.push("조건이 안 맞는 이유가 뭐야?");
   }
   if (policies.length >= 2) {
-    chips.push({ id: "compare_top_two", text: "상위 두 개 비교해줘" });
+    questions.push("상위 두 개 비교해줘");
   }
   if (policies.some((item) => item.deadline.is_imminent)) {
-    chips.push({ id: "imminent_order", text: "마감 임박한 것부터 준비 순서 알려줘" });
+    questions.push("마감 임박한 것부터 준비 순서 알려줘");
   }
-  return chips.slice(0, 3);
+  return questions.slice(0, 3);
 }

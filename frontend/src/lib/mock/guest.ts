@@ -8,7 +8,7 @@
 
 import { formatKoreanDate } from "../deadline";
 import { COPY } from "../labels";
-import type { Footnote, PolicyInfo } from "../contract";
+import type { Category, Footnote, PolicyInfo } from "../contract";
 import { conditionName } from "../contract";
 import { MOCK_POLICIES, type MockPolicy } from "./policies";
 import { toPolicyInfo } from "./display";
@@ -136,23 +136,21 @@ export function buildGuestAnswer(
   return sentences;
 }
 
-/** 관련 질문 칩 */
-export function buildGuestChips(policies: PolicyInfo[]) {
-  const chips = [
-    { id: "guest_housing", text: "월세 지원 있어?" },
-    { id: "guest_job", text: "취업 준비에 도움 되는 제도 알려줘" },
-    { id: "guest_living", text: "생활비 지원 받을 수 있는 거 있어?" },
-    { id: "guest_culture", text: "교통비 아낄 수 있는 방법 있을까?" },
+/**
+ * 관련 질문. 서버 `related` 이벤트와 같은 모양(문자열 배열, 최대 3개)으로 돌려준다
+ * (server/sse.py RelatedEventData).
+ */
+export function buildGuestChips(policies: PolicyInfo[]): string[] {
+  const candidates: Array<{ category: Category; question: string }> = [
+    { category: "housing", question: "월세 지원 있어?" },
+    { category: "job", question: "취업 준비에 도움 되는 제도 알려줘" },
+    { category: "living", question: "생활비 지원 받을 수 있는 거 있어?" },
+    { category: "culture", question: "교통비 아낄 수 있는 방법 있을까?" },
   ];
-  // 이미 보여 준 분야와 겹치지 않는 칩을 앞에 둔다
-  const shown = new Set(policies.flatMap((policy) => policy.categories));
-  const order: Record<string, string> = {
-    guest_housing: "housing",
-    guest_job: "job",
-    guest_living: "living",
-    guest_culture: "culture",
-  };
-  return [...chips]
-    .sort((a, b) => Number(shown.has(order[a.id] as never)) - Number(shown.has(order[b.id] as never)))
-    .slice(0, 3);
+  // 이미 보여 준 분야와 겹치지 않는 질문을 앞에 둔다
+  const shown = new Set<Category>(policies.flatMap((policy) => policy.categories));
+  return [...candidates]
+    .sort((a, b) => Number(shown.has(a.category)) - Number(shown.has(b.category)))
+    .slice(0, 3)
+    .map((item) => item.question);
 }
