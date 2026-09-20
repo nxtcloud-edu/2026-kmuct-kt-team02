@@ -13,10 +13,15 @@ D-day 계산이 실행 시각에 좌우되면 마감 경계값 테스트와 정�
 
 from .engine import evaluate_policies, evaluate_policy
 from .loader import count_verified, load_policies
+from .saved import evaluate_by_ids
+from .validate import blocking_issues, normalize_profile
 
 __all__ = [
+    "blocking_issues",
     "count_verified",
+    "evaluate_by_ids",
     "evaluate_policies",
     "evaluate_policy",
     "load_policies",
+    "normalize_profile",
 ]

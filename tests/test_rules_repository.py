@@ -11,11 +11,21 @@ from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from server.rule_engine import RuleEngineResult, RuleEngineUnavailableError
-from server.schemas import Policy, Profile
-
 from rules import constants as c
-from rules import repository
+
+# 이 파일만 `server` 계약 모델을 쓴다. 나머지 rules 테스트는 표준 라이브러리로 돌아간다.
+# 의존성이 없는 환경(맨 python3 + unittest)에서는 건너뛴다. 정식 러너는 pytest 다
+# (docs/00-overview.md 확정 결정).
+try:
+    from server.rule_engine import RuleEngineResult, RuleEngineUnavailableError
+    from server.schemas import Policy, Profile
+
+    from rules import repository
+
+    DEPENDENCIES_READY = True
+except ModuleNotFoundError as error:  # pragma: no cover - 환경에 따라 갈린다
+    DEPENDENCIES_READY = False
+    MISSING = error.name
 
 TODAY = date(2026, 9, 20)
 SENTENCE = "만 19세 이상 만 39세 이하 서울에 거주하는 청년이 신청할 수 있다."
@@ -70,6 +80,7 @@ def profile(**overrides) -> Profile:
     return Profile.model_validate(base)
 
 
+@unittest.skipUnless(DEPENDENCIES_READY, "fastapi·pydantic 미설치 환경에서는 건너뛴다")
 class AdapterTestCase(unittest.TestCase):
     def setUp(self):
         self.temp = TemporaryDirectory()
@@ -185,6 +196,7 @@ class RuleEngineAdapterTest(AdapterTestCase):
         self.assertEqual(checked, 1, "자치구를 채운 대표 프로필은 P2 하나다")
 
 
+@unittest.skipUnless(DEPENDENCIES_READY, "fastapi·pydantic 미설치 환경에서는 건너뛴다")
 class DistrictContractTest(unittest.TestCase):
     """자치구 필수 여부가 문서와 코드에서 어긋난 상태를 고정해 둔다.
 
