@@ -37,7 +37,7 @@
 | 필드 | 필수 | 허용 값 |
 | --- | --- | --- |
 | `age` | 필수 | 15~39 정수 |
-| `district` | 선택 | 자치구명 또는 비움 |
+| `district` | 필수 | 서울 25개 자치구명. 비움 또는 `null` 불가 |
 | `status` | 필수 | `enrolled`, `on_leave`, `final_semester`, `job_seeking`, `employed` |
 | `categories` | 필수 | `scholarship`, `living`, `job`, `culture`, `housing`, `all` 중 하나 이상 |
 | `income_bracket` | 선택 | `under_50`, `50_100`, `100_150`, `over_150`, `unknown` (기본값 `unknown`) |
@@ -116,7 +116,7 @@
 
 **조건 요약 키 이름은 12:00 통합 때 확정한다.** 이 문서는 `name` 으로 정했는데 구현 두 곳이 `summary` 를 쓴다. `ai/citation/verify.py` 의 `verify_conditions` 는 검증 실패 시 `item["summary"]` 를 비우고 제거 기록에도 `summary` 를 담는다. `ai/judgment/evaluate.py` 는 판정기가 돌려줄 형식을 `summary`, `result`, `excerpt`, `needed_field` 로 적어 둔다 (설계서 6-3). 확정하지 않은 채 두면 **서버는 `name` 을 읽고 AI B 는 `summary` 를 채우는 상태가 되어, 조건 요약이 빈 칸으로 화면에 나가고 오류는 나지 않는다.** 표는 그대로 그려지므로 통합 중에 알아채기 어렵다. 어느 이름으로 모을지는 백엔드B·AI B 가 함께 정한다. 여기서 한쪽으로 확정하지 않는 이유는, 이 문서만 고치면 코드 두 파일이 조용히 어긋난 채 남기 때문이다.
 
-`needed_field` 를 "추가 항목"에서 "프로필 항목"으로 넓힌 이유: 소득 구간과 자치구는 온보딩 폼에서 **선택 입력**이라(2장) 기본 항목인데도 미확인으로 남을 수 있다. `rules/README.md` 8장도 미확인 항목 목록에 자치구와 소득을 넣고, `ai/conversation/related.py` 의 `income_is_the_blocker` 는 `needed_field` 가 `income_bracket` 일 때만 소득 칩을 띄운다. `ai/conversation/README.md` 5장 후속 질문 표의 첫 두 줄도 `income_bracket` 과 `district` 다. 좁게 적어 두면 서버가 기본 항목을 이 필드에 담지 못한다고 읽고, 소득 때문에 `check` 인 정책에서 후속 질문과 칩이 둘 다 뜨지 않는다.
+`needed_field` 는 후속 확인이 가능한 프로필 항목을 담는다. `income_bracket`은 선택 입력이라 `unknown`으로 남을 수 있다. `district`는 새 세션에서 필수지만 이전·불완전 세션을 방어적으로 처리할 수 있도록 값 표에는 유지한다. 서버는 현재 Profile이 완전하면 이미 확정된 항목을 다시 묻지 않는다.
 
 ### 4-2. 마감 항목
 
@@ -230,12 +230,25 @@
 
 ## 7. GET /policies/{id}
 
-세션 번호를 함께 받는다. 돌려주는 것은 4장의 정책 판정 결과 + 공고 원문 정보.
-세션이 없으면 규칙 판정 없이 정책 원본 정보만 돌려준다.
+`session_id`를 필수 query parameter로 받는다. 서버는 세션의 현재 Profile과 백엔드 A 정책 저장소의 원본 정책을 `RuleEngine.evaluate_policy(profile, policy)`에 넘겨 단건 판정을 받는다. 추천 상위 5개 목록을 검색해 상세를 대신하지 않는다.
+
+응답은 4장의 `PolicyEvaluation`과 같은 형태이며 조건별 판정, 혜택, 마감, 서류, 신청 단계, 담당 기관, `source_url`, `apply_url`, `checked_at`을 포함한다.
+`source_url` 또는 `checked_at`이 없는 정책은 상세에 노출하지 않고 `policy_not_found` 404로 처리한다.
+세션이 없거나 만료됐으면 `session_expired` 404, 정책이 없으면 `policy_not_found` 404다.
 
 ## 8. PATCH /session/{id}/profile
 
-바꿀 필드만 보낸다. 돌려주는 것은 `/session`과 같다 (`profile`, `policies`, `followup`).
+바꿀 필드만 보낸다. 생략한 필드는 유지하고, 빈 요청은 입력 오류다. `region`은 서버 고정 필드라 보낼 수 없다.
+
+| 구분 | 필드 | 명시적 `null` 처리 |
+| --- | --- | --- |
+| 삭제 불가 | `age`, `district`, `status`, `categories` | 입력 오류 422 |
+| 소득 초기화 | `income_bracket` | `unknown`으로 정규화 |
+| 삭제 가능 | `housing_type`, `residence_period`, `remaining_semesters`, `job_seeking_period`, `employment_insurance`, `other_benefit`, `household_size`, `last_gpa` | 값을 `null`로 삭제 |
+
+전체 Profile을 Pydantic으로 다시 검증하고 백엔드 A `RuleEngine.evaluate(profile, limit=5)`로 추천을 재계산한 뒤에만 세션 값을 갱신한다.
+응답은 `/session`과 같은 `session_id`, 전체 `profile`, `policies`, `hidden_unlikely_count`, `followup` 형태다.
+세션이 없거나 만료됐으면 `session_expired` 404, 수정값이 잘못됐으면 `invalid_input` 422다.
 
 ## 9. /chat 처리 순서와 시간 예산
 
@@ -272,6 +285,7 @@
 | --- | --- | --- |
 | 입력 오류 | `invalid_input` | 입력한 정보를 다시 확인해 주세요 |
 | 세션 만료 | `session_expired` | 시간이 지나 처음부터 다시 시작할게요 |
+| 정책 없음·노출 제외 | `policy_not_found` | 정책을 찾을 수 없어요 |
 | 서버 오류 | `server_error` | 잠시 문제가 생겼어요. 다시 시도해 주세요 |
 | 답변 실패 | `answer_failed` | 설명을 불러오지 못했어요. 카드에서 조건을 확인해 주세요 |
 

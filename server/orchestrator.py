@@ -24,6 +24,7 @@ from server.orchestrator_adapters import (
     unknown_exception_judgment,
     validate_ai_json,
 )
+from server.policy_repository import PolicySourceCatalog
 from server.rule_engine import RuleEngine, RuleEngineResult
 from server.schemas import ContractModel, Policy, PolicyEvaluation
 from server.session_store import SessionStore
@@ -81,13 +82,6 @@ class ExceptionJudge(Protocol):
 
     async def judge(self, request: ExceptionJudgeRequest) -> object:
         """Return untrusted exception-condition JSON."""
-        ...
-
-
-class PolicySourceCatalog(Protocol):
-    """Backend A source-data lookup needed for exception citation checks."""
-
-    def get(self, policy_id: str) -> Policy | None:
         ...
 
 

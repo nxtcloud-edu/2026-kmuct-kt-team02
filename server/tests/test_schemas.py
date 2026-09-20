@@ -73,3 +73,12 @@ def test_region_request_field_returns_422() -> None:
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "invalid_input"
+
+
+def test_profile_requires_district() -> None:
+    profile_without_district = {
+        key: value for key, value in VALID_PROFILE_INPUT.items() if key != "district"
+    }
+
+    with pytest.raises(ValidationError):
+        ProfileInput.model_validate(profile_without_district)
