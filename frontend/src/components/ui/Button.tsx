@@ -2,7 +2,7 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
-type Variant = "primary" | "solid" | "secondary" | "ghost" | "kakao";
+type Variant = "primary" | "solid" | "secondary" | "ghost";
 type Size = "sm" | "md" | "lg";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -22,7 +22,6 @@ const VARIANTS: Record<Variant, string> = {
   secondary:
     "border border-line bg-white text-ink-800 hover:border-line-strong hover:text-brand-700",
   ghost: "text-ink-600 hover:bg-canvas-200 hover:text-brand-700 disabled:hover:bg-transparent",
-  kakao: "bg-[#FEE500] text-[#191600] hover:brightness-[0.97]",
 };
 
 const SIZES: Record<Size, string> = {

@@ -166,21 +166,6 @@ export function LoginPage() {
               </Button>
             </form>
 
-            <div className="my-5 flex items-center gap-3">
-              <span className="h-px flex-1 bg-line" />
-              <span className="text-[0.875rem] font-medium text-ink-500">또는</span>
-              <span className="h-px flex-1 bg-line" />
-            </div>
-
-            <Button
-              variant="kakao"
-              size="lg"
-              block
-              onClick={() => showToast("카카오 로그인은 연동 준비 중이에요.")}
-            >
-              카카오로 계속하기
-            </Button>
-
             <p className="mt-6 text-center text-[0.9375rem] text-ink-600">
               계정이 없어도 괜찮아요.{" "}
               <Link
