@@ -9,6 +9,7 @@ description = "FastAPI integration server for the SodaCookie MVP"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "anthropic==1.7.0",
     "fastapi==0.141.1",
     "pydantic==2.13.5",
     "uvicorn==0.53.0",
