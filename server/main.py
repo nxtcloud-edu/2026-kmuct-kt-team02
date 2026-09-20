@@ -7,10 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from server.ai_gateway import AIGateway
 from server.api import api_router
-from server.api.health import PolicyCatalog
 from server.chat_service import ChatService
 from server.config import Settings
 from server.errors import install_error_handlers
+from server.policy_repository import PolicyRepository
 from server.rule_engine import RuleEngine
 from server.session_store import SessionStore
 
@@ -18,7 +18,7 @@ from server.session_store import SessionStore
 def create_app(
     *,
     settings: Settings | None = None,
-    policy_catalog: PolicyCatalog | None = None,
+    policy_catalog: PolicyRepository | None = None,
     rule_engine: RuleEngine | None = None,
     session_store: SessionStore | None = None,
     ai_gateway: AIGateway | None = None,

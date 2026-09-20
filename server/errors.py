@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 class ErrorCode(StrEnum):
     INVALID_INPUT = "invalid_input"
     SESSION_EXPIRED = "session_expired"
+    POLICY_NOT_FOUND = "policy_not_found"
     SERVER_ERROR = "server_error"
     ANSWER_FAILED = "answer_failed"
 
@@ -26,6 +27,7 @@ class ErrorCode(StrEnum):
 _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.INVALID_INPUT: "입력한 정보를 다시 확인해 주세요",
     ErrorCode.SESSION_EXPIRED: "시간이 지나 처음부터 다시 시작할게요",
+    ErrorCode.POLICY_NOT_FOUND: "정책을 찾을 수 없어요",
     ErrorCode.SERVER_ERROR: "잠시 문제가 생겼어요. 다시 시도해 주세요",
     ErrorCode.ANSWER_FAILED: "설명을 불러오지 못했어요. 카드에서 조건을 확인해 주세요",
 }

@@ -25,7 +25,7 @@
 | --- | --- | --- | --- | --- |
 | 나이 | `age` | 필수 | 만 나이 정수 15~39 | 범위 밖은 폼에서 막음 |
 | 거주 지역 | `region` | 입력 안 함 | `seoul` 고정 | 서버 내부 Profile과 응답에만 포함. 클라이언트가 값을 선택하거나 전송하지 않음 |
-| 자치구 | `district` | 선택 | 서울 25개 자치구명 또는 `null` |
+| 자치구 | `district` | 필수 | 서울 25개 자치구명 | 생성·수정 후 항상 값이 있어야 함 |
 | 현재 상태 | `status` | 필수 | `enrolled`(재학), `on_leave`(휴학), `final_semester`(졸업예정), `job_seeking`(졸업 후 구직), `employed`(재직) | 하나만 |
 | 관심 분야 | `categories` | 필수 | `scholarship`(장학·교육), `living`(생활비), `job`(취업·훈련), `culture`(교통·통신·문화), `housing`(주거), `all`(전체) | 복수 선택. `all` 선택 시 나머지 해제 |
 | 가구 소득 | `income_bracket` | 선택 | `under_50`, `50_100`, `100_150`, `over_150`, `unknown` | 기본값 `unknown` |
