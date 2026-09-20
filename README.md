@@ -61,9 +61,23 @@ KIRO Spec 모드 요구사항 입력으로 쓴다. 전체 문서를 다 넣지 �
 | 7 | `docs/04-data-schema.md` | 정책 데이터 필드 |
 | 8 | `docs/05-interfaces.md` | 역할 간에 주고받는 것, 충돌 시 기준 |
 | 9 | 자기 역할 폴더 `README.md` | 상세 명세와 완료 기준 |
-| 10 | `docs/research/README.md` | 설계 근거. 왜 그렇게 정했는지 궁금할 때 |
+| 10 | `docs/research/README.md` | 설계 근거. 왜 그렇게 정했는지 확인이 필요할 때 |
 
-`.kiro/steering/`은 읽지 않아도 Kiro에 자동으로 적용된다. 다만 한 번 읽어 두면 왜 에이전트가 자꾸 물어보는지 이해가 된다.
+## Kiro 설정 (전원 적용)
+
+`.kiro/steering/`의 파일은 클론하면 **전원의 Kiro에 자동 적용**된다. 읽지 않아도 동작하지만, 한 번 보면 왜 에이전트가 자꾸 물어보는지 이해가 된다.
+
+| 파일 | 적용 | 내용 |
+| --- | --- | --- |
+| `00-project-context.md` | 자동 | 무엇을 만드는가, P0 세 가지, 폴더 소유권, 고정 값, 기술 스택, 금지 사항 |
+| `01-working-agreements.md` | 자동 | 추측하지 말고 물어보기, 구현 전 읽기, 검증 규칙, 병렬 에이전트 규칙 |
+| `02-roles-common.md` | 자동 | 용어, 프로필, 판정 규칙, 역할 간 인터페이스 |
+| `03-dev-method.md` | 자동 | 개발 방식, 사전 오류 점검 |
+| `90-reference-prd.md` | 수동 | PRD 전문. `#90-reference-prd`로 불러 쓴다 |
+| `91-role-ai-b.md` | 수동 | AI B 전용. 해당 담당자만 불러 쓴다 |
+
+**자기 역할 규칙을 항상 적용하고 싶으면** 로컬에서 그 파일의 `inclusion`을 `always`로 바꿔 쓰고 **커밋하지 않는다.**
+커밋하면 다른 역할의 Kiro도 그 규칙을 따라 자기 범위를 벗어난다. 자세한 건 `.kiro/steering/README.md`.
 
 ## 브랜치와 통합 규칙
 
@@ -133,4 +147,4 @@ KIRO Spec 모드 요구사항 입력으로 쓴다. 전체 문서를 다 넣지 �
 ### 문서와 코드가 다를 때
 
 **문서가 기준이다.** 문서를 먼저 고치고 구현한다. 문서에 없는 값이 필요하면 만들지 말고 물어본다.
-자세한 규칙은 `.kiro/steering/02-working-agreements.md`에 있고, 클론하면 Kiro에 자동 적용된다.
+자세한 규칙은 `.kiro/steering/01-working-agreements.md`에 있고, 클론하면 Kiro에 자동 적용된다.

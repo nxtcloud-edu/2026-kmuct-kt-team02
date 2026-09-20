@@ -1,7 +1,7 @@
 # 프론트엔드 (담당: 프론트)
 
 > 출처: 역할별 설계서 2장. 소유: 프론트.
-> 이 문서는 화면 설계 명세다. 구현은 본선 당일에 한다.
+> 이 문서는 화면 설계 명세다. 구현은 이 명세를 따른다.
 > 본선 당일 오전(09:00~10:30)에 `docs/02-requirements-ears.md` + `docs/01-glossary-profile.md` + 이 파일을 KIRO Spec 요구사항 입력으로 쓴다.
 > 프로필 허용 값, 상태 문구, 마감 배지는 `docs/01-glossary-profile.md`를, 이벤트와 응답 항목은 `docs/03-api-contract.md`를 그대로 따른다.
 
