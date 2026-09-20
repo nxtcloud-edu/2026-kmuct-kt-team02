@@ -22,11 +22,12 @@ import type {
   UserStatus,
 } from "@/lib/contract";
 
+/** 서버 필수 항목(age·status·categories) + 참고용 선택 항목. 자치구는 선택이라 필수에 넣지 않는다 */
 const COMPLETION_FIELDS = [
   { key: "age", label: "나이" },
-  { key: "district", label: "자치구" },
   { key: "status", label: "현재 상태" },
   { key: "categories", label: "관심 분야" },
+  { key: "district", label: "자치구" },
   { key: "income_bracket", label: "가구 소득" },
 ] as const;
 
@@ -100,9 +101,8 @@ export function MyPage() {
     });
   };
 
-  /** 서버가 필수로 요구하는 네 항목이 모두 있어야 저장할 수 있다 */
-  const profileReady =
-    ageValid && district !== "" && status !== "" && categories.length > 0;
+  /** 서버가 필수로 요구하는 세 항목(나이·현재 상태·관심 분야)만 있으면 저장할 수 있다. 자치구는 선택 */
+  const profileReady = ageValid && status !== "" && categories.length > 0;
   const canSave = profileReady && dirty && !saving;
 
   const handleSubmit = (event: FormEvent) => {
@@ -111,11 +111,11 @@ export function MyPage() {
       setAgeError(`만 ${AGE_MIN}세부터 ${AGE_MAX}세까지 입력해 주세요`);
       return;
     }
-    if (district === "" || status === "" || categories.length === 0) return;
+    if (status === "" || categories.length === 0) return;
 
     const input: ProfileInput = {
       age: ageNumber,
-      district,
+      district: district === "" ? null : district,
       status,
       categories,
       income_bracket: income,
@@ -133,11 +133,11 @@ export function MyPage() {
 
   /** 저장한 조건으로 맞춤 판정을 시작하고 대화 화면으로 이동한다 */
   const startWithProfile = async () => {
-    // 여기서 만드는 값은 서버가 요구하는 필수 항목을 모두 채운 상태여야 한다
-    if (!ageValid || district === "" || status === "" || categories.length === 0) return;
+    // 여기서 만드는 값은 서버가 요구하는 필수 항목을 모두 채운 상태여야 한다. 자치구는 선택
+    if (!ageValid || status === "" || categories.length === 0) return;
     const input: ProfileInput = {
       age: ageNumber,
-      district,
+      district: district === "" ? null : district,
       status,
       categories,
       income_bracket: income,
@@ -159,7 +159,7 @@ export function MyPage() {
         </h1>
         <p className="mt-2 max-w-3xl text-[0.9375rem] leading-relaxed text-ink-600">
           저장한 조건으로 상담을 시작하면 같은 정보를 다시 말하지 않아도 돼요.
-          {auth ? ` 현재 ${auth.email}로 로그인되어 있어요.` : ""}
+          {auth ? ` 현재 ${auth.userId} 아이디로 로그인되어 있어요.` : ""}
         </p>
       </header>
 
@@ -172,11 +172,11 @@ export function MyPage() {
                 aria-hidden="true"
                 className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-gradient text-lg font-bold text-white"
               >
-                {(auth?.email ?? "쏘")[0].toUpperCase()}
+                {(auth?.userId ?? "쏘")[0].toUpperCase()}
               </span>
               <div className="min-w-0">
                 <p className="truncate text-[0.9375rem] font-bold text-ink-900">
-                  {auth?.email ?? "로그인하지 않음"}
+                  {auth?.userId ?? "로그인하지 않음"}
                 </p>
                 <p className="text-[0.875rem] text-ink-500">
                   프로필 {completion.percent}% 완성
@@ -224,7 +224,7 @@ export function MyPage() {
             </Button>
             {!profileReady && (
               <p className="mt-2 text-[0.875rem] text-ink-500">
-                나이, 자치구, 현재 상태, 관심 분야를 채우면 맞춤 판정을 받을 수 있어요.
+                나이, 현재 상태, 관심 분야를 채우면 맞춤 판정을 받을 수 있어요.
               </p>
             )}
 
@@ -283,10 +283,9 @@ export function MyPage() {
 
               <SelectField
                 label="자치구"
-                required
-                hint="서울 거주 기준이에요. 구에서 하는 지원도 함께 찾아봐요"
+                hint="선택이에요. 고르면 구에서 하는 지원도 함께 찾아봐요"
                 options={DISTRICT_OPTIONS}
-                placeholder="자치구를 선택해 주세요"
+                placeholder="자치구를 선택해 주세요 (선택)"
                 value={district}
                 onChange={(event) => {
                   setDistrict(event.target.value as District | "");

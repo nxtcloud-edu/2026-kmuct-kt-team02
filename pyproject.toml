@@ -9,7 +9,10 @@ description = "FastAPI integration server for the SodaCookie MVP"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "anthropic==1.6.0",
+    # 캠프가 준 것은 OpenAI 호환 게이트웨이다 (ai/gateway.py). anthropic 은
+    # ai/adapters.py 의 직접 호출 경로용이라 남겨 둔다 — 키를 따로 받으면 그대로 쓴다.
+    "anthropic==1.7.0",
+    "openai==3.16.2",
     "fastapi==0.141.1",
     "pydantic==2.13.5",
     "uvicorn==0.53.0",

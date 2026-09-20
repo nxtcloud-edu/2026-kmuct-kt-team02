@@ -285,8 +285,11 @@ class TestComplete(unittest.TestCase):
         sent = sdk.messages.calls[0]
         self.assertEqual(sent["model"], CONFIG.model)
         self.assertEqual(sent["max_tokens"], CONFIG.max_tokens)
-        self.assertEqual(sent["temperature"], CONFIG.temperature)
         self.assertEqual(sent["timeout"], 7.5)
+        # temperature 는 최상위 인자가 아니라 요청 본문에 실린다. anthropic 1.7.0 의
+        # `Messages.create()` 가 최상위 temperature 를 받지 않아 TypeError 가 난다.
+        # 실제 게이트웨이 호출로 확인했다.
+        self.assertEqual(sent["extra_body"]["temperature"], CONFIG.temperature)
 
     def test_timeout_인자를_모르는_sdk는_config_오류로_막는다(self):
         """timeout 없이 호출하면 정책당 8초·전체 20초 상한을 강제할 수 없다."""

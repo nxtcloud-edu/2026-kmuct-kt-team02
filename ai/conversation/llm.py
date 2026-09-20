@@ -232,7 +232,11 @@ CALL_SITE_POLICIES: Mapping[CallSite, CallSitePolicy] = {
     CallSite.INTERPRET: CallSitePolicy(
         site=CallSite.INTERPRET,
         label="메시지 해석",
-        timeout_s=3.0,
+        # 3.0 에서 6.0 으로 올렸다. **실측 근거**: 캠프 게이트웨이(`ai/gateway.py`)는
+        # Bedrock 을 경유해서 첫 토큰까지 5.38초가 걸렸다(모델 `bedrock-claude-fable-5`,
+        # 짧은 프롬프트, 2026-09-20 측정). 3초로는 어떤 응답도 받을 수 없고, 그 실패는
+        # `timeout` 으로 조용히 폴백되어 "해석이 안 된다"로만 보인다.
+        timeout_s=6.0,
         timeout_scope="전체",
         output=OutputKind.SCHEMA,
         temperature=TEMPERATURE_STRUCTURED,
@@ -256,8 +260,14 @@ CALL_SITE_POLICIES: Mapping[CallSite, CallSitePolicy] = {
     CallSite.ANSWER: CallSitePolicy(
         site=CallSite.ANSWER,
         label="답변 작성",
-        # 3초는 **첫 조각** 기준이다. 전체는 남은 예산 안에서 흐른다 (research 2장).
-        timeout_s=3.0,
+        # **첫 조각** 기준이다. 전체는 남은 예산 안에서 흐른다 (research 2장).
+        #
+        # 3.0 에서 8.0 으로 올렸다. **실측 근거**: 캠프 게이트웨이에서 첫 조각까지
+        # 5.38초, 38개 조각 전체가 8.02초였다(2026-09-20 측정). 3초로는 첫 조각을 받기
+        # 전에 타임아웃이 나고, 그러면 `TextOutcome.text` 가 빈 문자열이라
+        # `pipeline.finish_turn` 이 `empty_after_sanitize` 로 답변을 버린다. 화면에는
+        # 카드만 남고 설명이 아예 안 나간다.
+        timeout_s=8.0,
         timeout_scope="첫 조각",
         output=OutputKind.TEXT_STREAM,
         temperature=TEMPERATURE_ANSWER,
@@ -268,6 +278,22 @@ CALL_SITE_POLICIES: Mapping[CallSite, CallSitePolicy] = {
     ),
 }
 """세 호출 지점의 예산·실패 처리 표.
+
+**합계가 20초를 넘는다. 알면서 그대로 둔다.**
+해석 6 + 판정 8(정책당) + 답변 첫 조각 8 = 22 이고, 여기에 `RESERVED_NON_MODEL_S` 1.5 를
+빼면 모델에 쓸 수 있는 시간은 18.5초다. 세 호출을 순서대로 다 채우면 넘친다.
+
+넘치게 둔 이유. 각 값은 **그 호출이 성공하려면 최소한 필요한 시간**이고(실측), 그보다 줄이면
+그 단계는 항상 실패한다. 항상 실패하는 값을 적어 두는 것보다, 필요한 값을 적고 남은 예산이
+없을 때 뒤 단계가 폴백되게 두는 편이 낫다. `BudgetTracker.clamp` 가 남은 예산으로 각 호출을
+줄이므로 **20초를 실제로 넘기지는 않는다.** 대신 앞 단계가 느리면 뒤 단계가 굶는다. 그 순서가
+해석 → 판정 → 답변이라, 굶는 쪽은 답변이고 그때 카드는 남는다(9장 실패 처리).
+
+줄일 수 있는 자리는 세 곳이다. 판정은 후보별 병렬이라 정책당 8초가 벽시계 8초에 가깝고
+(`ai/judgment/judge.py` 의 `max_workers`), 해석은 후속 질문 버튼 답변에서 **건너뛸 수 있고**
+(`docs/03-api-contract.md` 3장, 그 경로로 3초를 절약한다), 답변은 첫 조각만 기다리면 나머지는
+스트리밍으로 흐른다. 20초 안에 세 번을 다 채우는 것이 목표가 아니라, 느릴 때 무엇을 포기할지
+정해 두는 것이 목표다.
 
 예외 조건 판정은 AI B 담당이지만 **호출 지점이므로 여기 정의해 둔다.**
 담당자별로 호출부를 따로 두면 재시도 규칙과 타임아웃이 갈라지고, 20초를 어떻게

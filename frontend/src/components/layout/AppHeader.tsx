@@ -71,9 +71,9 @@ export function AppHeader() {
                   aria-hidden="true"
                   className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-gradient text-[0.8125rem] font-bold text-white"
                 >
-                  {auth.email.slice(0, 1).toUpperCase()}
+                  {auth.userId.slice(0, 1).toUpperCase()}
                 </span>
-                {auth.email.split("@")[0]}
+                {auth.userId}
               </Link>
               <Button
                 variant="secondary"
@@ -141,7 +141,7 @@ export function AppHeader() {
             {ready && auth ? (
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[0.9375rem] font-semibold text-ink-700">
-                  {auth.email}
+                  {auth.userId}
                 </span>
                 <Button variant="secondary" size="sm" onClick={signOut}>
                   로그아웃
