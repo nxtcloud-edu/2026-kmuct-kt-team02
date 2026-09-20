@@ -13,7 +13,6 @@ import {
   INCOME_OPTIONS,
   STATUS_OPTIONS,
 } from "@/lib/profileOptions";
-import { createSession } from "@/lib/api";
 import { useApp } from "@/providers/AppProvider";
 import type {
   Category,
@@ -39,7 +38,8 @@ const COMPLETION_FIELDS = [
  */
 export function MyPage() {
   const navigate = useNavigate();
-  const { profileInput, saveProfileInput, setSession, auth, showToast } = useApp();
+  const { profileInput, saveProfileInput, startSessionFromProfile, auth, showToast } =
+    useApp();
 
   const [age, setAge] = useState("");
   const [district, setDistrict] = useState<District | "">("");
@@ -121,10 +121,14 @@ export function MyPage() {
     setSaving(true);
     saveProfileInput(input);
     setDirty(false);
-    setSaving(false);
-    showToast("내 정보를 저장했어요.");
+    // 저장한 조건으로 판정을 다시 받도록 세션을 갱신한다
+    void startSessionFromProfile(input).then(() => {
+      setSaving(false);
+      showToast("내 정보를 저장했어요. 이제 맞춤 판정을 받을 수 있어요.");
+    });
   };
 
+  /** 저장한 조건으로 맞춤 판정을 시작하고 대화 화면으로 이동한다 */
   const startWithProfile = async () => {
     if (!ageValid || status === "" || categories.length === 0) return;
     const input: ProfileInput = {
@@ -134,14 +138,10 @@ export function MyPage() {
       categories,
       income_bracket: income,
     };
-    try {
-      saveProfileInput(input);
-      const session = await createSession(input);
-      setSession(session);
-      navigate("/chat");
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : COPY.answerFailed, "error");
-    }
+    saveProfileInput(input);
+    setDirty(false);
+    const ok = await startSessionFromProfile(input);
+    if (ok) navigate("/");
   };
 
   return (

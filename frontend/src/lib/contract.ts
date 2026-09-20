@@ -172,18 +172,19 @@ export interface Deadline {
   is_imminent: boolean;
 }
 
-export interface PolicyEvaluation {
+/**
+ * 판정 없이 공고 내용만 담은 정책 정보.
+ *
+ * 로그인하지 않으면 프로필이 없어 판정할 수 없다. 그때 이 모양으로 보여 준다.
+ * 근거 없는 판정을 내보내지 않기 위해 status를 아예 두지 않는다.
+ */
+export interface PolicyInfo {
   policy_id: string;
   title: string;
   agency: string;
   categories: Category[];
-  status: EvaluationStatus;
-  /** 화면 문구. 코드가 붙인다 */
-  status_label: string;
   benefit: string;
   conditions: ConditionEvaluation[];
-  /** check일 때만 채워진다 */
-  conditional_note?: string | null;
   deadline: Deadline;
   documents: string[];
   steps: string[];
@@ -191,6 +192,22 @@ export interface PolicyEvaluation {
   apply_url?: string | null;
   checked_at: string;
   data_status: PolicyDataStatus;
+}
+
+/** 프로필 기준 판정까지 붙은 정책 (docs/03-api-contract.md 4장) */
+export interface PolicyEvaluation extends PolicyInfo {
+  status: EvaluationStatus;
+  /** 화면 문구. 코드가 붙인다 */
+  status_label: string;
+  /** check일 때만 채워진다 */
+  conditional_note?: string | null;
+}
+
+/** 판정이 붙어 있는지 */
+export function isEvaluated(
+  policy: PolicyInfo | PolicyEvaluation,
+): policy is PolicyEvaluation {
+  return "status" in policy && typeof (policy as PolicyEvaluation).status === "string";
 }
 
 /* ------------------------------------------------------------------ *
