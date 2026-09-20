@@ -1,0 +1,135 @@
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-canvas-100 text-ink-800 font-sans antialiased;
+    font-size: 15px;
+    line-height: 1.6;
+    letter-spacing: -0.01em;
+    word-break: keep-all;
+  }
+
+  /* 모바일 본문 14px 이상 (docs/08 접근성) */
+  small,
+  .text-xs {
+    font-size: 0.875rem !important;
+    line-height: 1.5;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font-family: inherit;
+    font-size: 0.9375rem;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply text-ink-900 font-bold;
+    letter-spacing: -0.03em;
+  }
+
+  :focus-visible {
+    outline: none;
+  }
+
+  ::selection {
+    background: rgba(124, 128, 240, 0.22);
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-white shadow-card;
+  }
+
+  .panel {
+    @apply rounded-3xl border border-line bg-white shadow-panel;
+  }
+
+  /* 모든 조작 요소에 포커스 표시 (docs/08 접근성) */
+  .focus-ring {
+    @apply focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas-100;
+  }
+
+  .text-gradient {
+    @apply bg-brand-gradient bg-clip-text text-transparent;
+  }
+
+  .control {
+    @apply w-full rounded-xl border border-line bg-canvas-50 px-4 text-[0.9375rem] text-ink-900 outline-none transition-all duration-200;
+    @apply placeholder:text-ink-400 hover:border-line-strong hover:bg-white;
+    @apply focus-visible:border-brand-400 focus-visible:bg-white focus-visible:ring-4 focus-visible:ring-brand-400/20;
+    @apply disabled:cursor-not-allowed disabled:bg-canvas-200 disabled:text-ink-400;
+  }
+
+  .control-error {
+    @apply border-urgent-border bg-urgent-bg/40 focus-visible:border-urgent focus-visible:ring-urgent/20;
+  }
+
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-canvas-200;
+  }
+
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.75),
+      transparent
+    );
+    animation: shimmer 1.6s infinite;
+  }
+}
+
+@layer utilities {
+  .scrollbar-slim {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(95, 104, 143, 0.35) transparent;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    background-color: rgba(95, 104, 143, 0.3);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
