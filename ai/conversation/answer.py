@@ -891,8 +891,28 @@ def _deadline_line(policies: Sequence[Mapping[str, Any]]) -> Optional[str]:
     """마감 강조 한 문장 (README 6장 4번).
 
     ``deadline.is_imminent`` 가 참인 정책만 모아, 이미 계산된 ``badge`` 를 인용한다
-    (docs/03-api-contract.md 4-2). ``badge`` 가 없으면 ``d_day`` 로 "D-n" 만 만든다.
-    남은 일수를 여기서 세지 않는다.
+    (docs/03-api-contract.md 4-2). ``badge`` 가 없으면 ``d_day`` 가 **1 이상일 때만**
+    "D-n" 을 만든다. 남은 일수를 여기서 세지 않는다.
+
+    ``d_day`` 가 0 이하일 때 배지를 만들지 않는 이유
+    ------------------------------------------------
+    서버 ``Deadline.d_day`` 는 ``int | None`` 이라 0 과 음수를 막지 않는다. 전에는 값을 그대로
+    끼워 마감이 지난 정책에 ``"D--3"`` 이 나갔다. 사람이 읽을 수 없는 문구이고, 배지 문구 표
+    (docs/03-api-contract.md 4-2: 오늘 마감 / 마감 임박 D-n / D-n / 상시 접수 / 접수 예정)에
+    없는 문구다. 0 도 같은 문제다. 표는 마감일이 오늘이면 "오늘 마감" 이라 하고 "D-0" 은 없다.
+
+    버린 선택지
+      - ``d_day`` 가 0 이면 "오늘 마감", 음수면 "마감됨" 을 쓴다: 앞엣것은 표에 있는 문구지만
+        어느 문구를 쓸지 고르는 일이 곧 배지 결정이고, 그건 날짜를 아는 서버의 몫이다
+        (README 2장: 이 모듈은 주어진 배지 값을 인용만 한다). 뒤엣것은 표에 없는 문구를
+        새로 만드는 것이라 화면 문구가 표 밖에서 정해진다.
+      - ``abs(d_day)`` 로 "D-3" 을 만든다: 마감이 지난 정책을 사흘 남은 것처럼 보여준다.
+        틀린 안내가 읽을 수 없는 문구보다 나쁘다.
+      - 정책을 마감 문장에서 아예 뺀다: 마감 임박 여부는 ``is_imminent`` 가 정하고
+        (``related.py`` 도 같은 규칙) 그 판단을 ``d_day`` 로 뒤집으면 판단이 두 곳에 생긴다.
+
+    그래서 배지만 비운다. 제목이 있으면 "제목" 만 남고, 제목도 없으면 그 정책은 문장에서
+    빠진다. 마감이 가깝다는 사실은 남고 숫자만 말하지 않는 상태다.
 
     문장 끝에 각주 자리(``SLOT_FOOTNOTE``)를 둔다. 마감일은 공고에서 온 날짜이므로 각주가
     필요한 문장이고(README 6장 근거 규칙), 번호는 서버가 부여한 값을 모델이 채운다.
@@ -908,7 +928,8 @@ def _deadline_line(policies: Sequence[Mapping[str, Any]]) -> Optional[str]:
         badge = str(deadline.get("badge") or "").strip()
         if not badge:
             d_day = _as_int(deadline.get("d_day"))
-            badge = f"D-{d_day}" if d_day is not None else ""
+            # 0 이하는 표에 문구가 없다. 지어내지 않고 배지를 비운다 (위 독스트링).
+            badge = f"D-{d_day}" if d_day is not None and d_day >= 1 else ""
         label = f"{title} {badge}".strip() if title else badge
         if label:
             urgent.append(label)

@@ -11,7 +11,7 @@ const OFFICIAL_LINKS = [
 ];
 
 const SERVICE_LINKS = [
-  { to: "/chat", label: "AI 혜택 상담" },
+  { to: "/", label: "AI 혜택 상담" },
   { to: "/policies", label: "정책 모아보기" },
   { to: "/mypage", label: "마이페이지" },
 ];

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ChevronDown, Search, Send } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ChevronDown, Search, Send, Sparkles, UserCheck } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, EmptyState } from "@/components/ui/Surface";
 import { LiveRegion } from "@/components/ui/LiveRegion";
@@ -15,44 +15,36 @@ import { useChatStream } from "@/hooks/useChatStream";
 import { useApp } from "@/providers/AppProvider";
 import { looksSensitive } from "@/lib/mask";
 import { COPY, EXAMPLE_CHIPS } from "@/lib/labels";
-import type { PolicyEvaluation } from "@/lib/contract";
+import type { PolicyInfo } from "@/lib/contract";
 
+/**
+ * 홈 = AI 대화 화면.
+ *
+ * 로그인 전에는 프로필이 없어 판정할 수 없으므로 공고 기준 안내만 하고,
+ * 로그인하면 맞춤 판정을 받을 수 있다고 알린다.
+ * 로그인 후에는 마이페이지에 저장한 조건으로 세션을 만들어 판정까지 받는다.
+ */
 export function ChatPage() {
   const { session, ready } = useApp();
-  const navigate = useNavigate();
-
-  // 온보딩을 거치지 않았으면 홈으로 보낸다
-  useEffect(() => {
-    if (ready && !session) navigate("/", { replace: true });
-  }, [ready, session, navigate]);
-
-  if (!session) return null;
-  return <ChatView key={session.session_id} />;
+  // 세션이 생기거나 사라지면 대화를 새로 시작한다
+  return <ChatView key={session?.session_id ?? "guest"} ready={ready} />;
 }
 
-function ChatView() {
-  const { session } = useApp();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const chat = useChatStream(session!);
+function ChatView({ ready }: { ready: boolean }) {
+  const { session, auth, profileInput, startSessionFromProfile } = useApp();
+  const chat = useChatStream(session);
 
   const [input, setInput] = useState("");
-  const [selected, setSelected] = useState<PolicyEvaluation | null>(null);
+  const [selected, setSelected] = useState<PolicyInfo | null>(null);
   const [showHidden, setShowHidden] = useState(false);
-  const startedRef = useRef(false);
   const timelineRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // 온보딩에서 넘어온 첫 질문을 한 번만 보낸다
+  // 로그인했고 저장한 조건이 있으면 맞춤 모드로 올린다
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    const state = location.state as { firstMessage?: string } | null;
-    const first = state?.firstMessage?.trim();
-    if (first) chat.send(first);
-  }, [location.state, chat]);
+    if (!ready || session || !auth || !profileInput) return;
+    void startSessionFromProfile();
+  }, [ready, session, auth, profileInput, startSessionFromProfile]);
 
-  // 새 메시지가 붙으면 타임라인을 아래로 옮긴다
   useEffect(() => {
     const node = timelineRef.current;
     if (!node) return;
@@ -60,6 +52,7 @@ function ChatView() {
   }, [chat.turns]);
 
   const sensitive = looksSensitive(input);
+  const showSkeleton = chat.streaming && chat.policies.length === 0;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -77,33 +70,34 @@ function ChatView() {
     }
   };
 
-  const showSkeleton = chat.streaming && chat.policies.length === 0;
-
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
-      {/* 라이브 리전은 갱신 전에 페이지에 있어야 한다 */}
       <LiveRegion
         politeMessage={chat.politeMessage}
         assertiveMessage={chat.assertiveMessage}
       />
 
-      {/* 상단 고정 프로필 요약 바 */}
-      <div className="sticky top-[4.25rem] z-30 mb-4">
-        <ProfileSummaryBar
-          profile={chat.profile}
-          changedFields={chat.changedFields}
-          onEdit={() => navigate("/mypage")}
-        />
-      </div>
+      {/* 맞춤 모드에서만 프로필 요약 바를 고정한다 */}
+      {!chat.guest && chat.profile && (
+        <div className="sticky top-[4.25rem] z-30 mb-4">
+          <ProfileSummaryBar
+            profile={chat.profile}
+            changedFields={chat.changedFields}
+            onEdit={() => undefined}
+          />
+        </div>
+      )}
 
-      {/* 결과 카드 왼쪽, 대화 오른쪽 */}
+      {/* 로그인 전 안내 */}
+      {chat.guest && <GuestNotice loggedIn={Boolean(auth)} />}
+
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-        {/* 정책 카드 묶음 */}
+        {/* 정책 카드 */}
         <section aria-label="찾은 제도" className="order-2 lg:order-1">
           <div className="mb-3 flex items-baseline justify-between gap-3">
             <h2 className="text-[1.0625rem] font-bold text-ink-900">
-              찾은 제도{" "}
-              <span className="text-gradient">{chat.policies.length}</span>개
+              {chat.guest ? "관련 제도" : "찾은 제도"}{" "}
+              <span className="text-gradient">{chat.policies.length}</span>건
             </h2>
             <Link
               to="/policies"
@@ -123,23 +117,8 @@ function ChatView() {
             <Card>
               <EmptyState
                 icon={Search}
-                title={COPY.emptyTitle}
-                description={
-                  <ul className="space-y-1 text-left">
-                    <li>· {COPY.emptyHintAll}</li>
-                    <li>· {COPY.emptyHintDistrict}</li>
-                  </ul>
-                }
-                action={
-                  <a
-                    href={COPY.emptyPortalUrl}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="rounded-xl focus-ring"
-                  >
-                    <Button variant="secondary">{COPY.emptyPortalLabel}</Button>
-                  </a>
-                }
+                title="아직 보여드릴 제도가 없어요"
+                description="오른쪽 대화창에 지금 상황이나 필요한 걸 말해 주시면 관련 제도를 찾아 정리해 드릴게요."
               />
             </Card>
           ) : (
@@ -155,8 +134,8 @@ function ChatView() {
             </div>
           )}
 
-          {/* 접힌 영역: 조건이 맞지 않을 수 있는 제도 */}
-          {chat.hiddenCount > 0 && (
+          {/* 접힌 영역은 판정이 있을 때만 의미가 있다 */}
+          {!chat.guest && chat.hiddenCount > 0 && (
             <div className="mt-3">
               <button
                 type="button"
@@ -189,16 +168,38 @@ function ChatView() {
         {/* AI 대화 */}
         <section
           aria-label="AI 혜택 상담"
-          className="order-1 flex min-h-[34rem] flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-panel lg:order-2 lg:h-[calc(100vh-13rem)] lg:sticky lg:top-[9.5rem]"
+          className="order-1 flex min-h-[34rem] flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-panel lg:order-2 lg:sticky lg:top-[5.5rem] lg:h-[calc(100vh-9rem)]"
         >
-          <div className="flex items-center gap-3 border-b border-line-soft bg-canvas-50 px-5 py-4">
-            <Logo variant="mark" size={30} />
-            <div>
-              <h2 className="text-[1.0625rem] font-bold text-ink-900">쏘다 AI 상담</h2>
-              <p className="text-[0.875rem] text-ink-500">
-                공식 공고를 근거로 답하고, 모든 판정에 원문 각주를 붙여요
-              </p>
+          <div className="flex items-center justify-between gap-3 border-b border-line-soft bg-canvas-50 px-5 py-4">
+            <div className="flex items-center gap-3">
+              <Logo variant="mark" size={30} />
+              <div>
+                <h1 className="text-[1.0625rem] font-bold text-ink-900">
+                  쏘다 AI 혜택 상담
+                </h1>
+                <p className="text-[0.875rem] text-ink-500">
+                  {chat.guest
+                    ? "공고에 적힌 내용을 근거와 함께 알려드려요"
+                    : "내 조건으로 판정해서 근거와 함께 알려드려요"}
+                </p>
+              </div>
             </div>
+            <span
+              className={
+                chat.guest
+                  ? "hidden shrink-0 rounded-full border border-line bg-white px-2.5 py-1 text-[0.875rem] font-semibold text-ink-600 sm:inline-flex"
+                  : "hidden shrink-0 items-center gap-1.5 rounded-full border border-likely-border bg-likely-bg px-2.5 py-1 text-[0.875rem] font-bold text-likely sm:inline-flex"
+              }
+            >
+              {chat.guest ? (
+                "공고 기준"
+              ) : (
+                <>
+                  <UserCheck aria-hidden="true" className="h-3.5 w-3.5" />
+                  맞춤 판정
+                </>
+              )}
+            </span>
           </div>
 
           <div
@@ -208,8 +209,8 @@ function ChatView() {
             {chat.turns.length === 0 && (
               <div className="rounded-2xl border border-line-soft bg-canvas-50 p-4">
                 <p className="text-[0.9375rem] leading-relaxed text-ink-700">
-                  왼쪽에 규칙으로 먼저 찾은 제도를 띄웠어요. 궁금한 걸 말해 주시면 조건을
-                  확인해서 근거와 함께 설명해 드릴게요.
+                  안녕하세요, 쏘다예요. 정책 이름을 몰라도 괜찮아요. 지금 상황이나 필요한
+                  걸 편하게 말해 주세요.
                 </p>
                 <ul className="mt-3 flex flex-wrap gap-2">
                   {EXAMPLE_CHIPS.map((chip) => (
@@ -265,6 +266,11 @@ function ChatView() {
                       </div>
                     )}
 
+                    {/* 로그인 전 답변 끝에 맞춤 판정 안내를 붙인다 */}
+                    {chat.guest && turn.complete && !turn.error && (
+                      <LoginUpsell loggedIn={Boolean(auth)} compact />
+                    )}
+
                     {turn.error && (
                       <div className="rounded-2xl border border-urgent-border bg-urgent-bg px-4 py-3">
                         <p className="text-[0.9375rem] leading-relaxed text-ink-800">
@@ -314,7 +320,6 @@ function ChatView() {
             })}
           </div>
 
-          {/* 입력창. 답변 생성 중에는 비활성 */}
           <form onSubmit={submit} className="border-t border-line-soft bg-canvas-50 px-5 py-4">
             <label htmlFor="chat-input" className="sr-only">
               상담 내용 입력
@@ -322,7 +327,6 @@ function ChatView() {
             <div className="flex items-end gap-2 rounded-2xl border border-line bg-white p-2 transition-colors focus-within:border-brand-300">
               <textarea
                 id="chat-input"
-                ref={inputRef}
                 rows={1}
                 value={input}
                 disabled={chat.streaming}
@@ -354,6 +358,67 @@ function ChatView() {
       </div>
 
       <PolicyDetailPanel policy={selected} onClose={() => setSelected(null)} />
+    </div>
+  );
+}
+
+/** 화면 상단 안내 */
+function GuestNotice({ loggedIn }: { loggedIn: boolean }) {
+  return (
+    <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-brand-200 bg-brand-50/70 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+      <p className="flex items-start gap-2.5 text-[0.9375rem] leading-relaxed text-ink-800">
+        <Sparkles aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />
+        {loggedIn ? (
+          <span>
+            <span className="font-bold">조건을 채우면 맞춤 판정을 받을 수 있어요.</span>{" "}
+            마이페이지에서 나이와 현재 상태를 알려주시면 제도마다 내가 조건을 채우는지
+            따져서 보여드려요.
+          </span>
+        ) : (
+          <span>
+            <span className="font-bold">
+              지금은 공고에 적힌 내용만 알려드릴 수 있어요.
+            </span>{" "}
+            로그인하면 나이와 현재 상태를 기준으로 내가 신청할 수 있는 제도인지 따져서
+            알려드려요.
+          </span>
+        )}
+      </p>
+      <Link to={loggedIn ? "/mypage" : "/login"} className="shrink-0 rounded-xl focus-ring">
+        <Button size="sm">{loggedIn ? "내 조건 입력하기" : "로그인하고 맞춤 안내 받기"}</Button>
+      </Link>
+    </div>
+  );
+}
+
+/** 답변 아래에 붙는 맞춤 판정 안내 */
+function LoginUpsell({
+  loggedIn,
+  compact = false,
+}: {
+  loggedIn: boolean;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-2xl border border-dashed border-brand-300 bg-brand-50/50 px-4 ${
+        compact ? "py-3" : "py-4"
+      }`}
+    >
+      <p className="flex items-start gap-2 text-[0.9375rem] leading-relaxed text-ink-700">
+        <UserCheck aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />
+        {loggedIn
+          ? "마이페이지에 나이와 현재 상태를 저장하면 위 제도가 내 조건에 맞는지 조건별로 따져서 보여드릴 수 있어요."
+          : "로그인하면 위 제도가 내 조건에 맞는지 조건별로 따져서 보여드릴 수 있어요. 나이와 현재 상태만 알려주시면 돼요."}
+      </p>
+      <Link
+        to={loggedIn ? "/mypage" : "/login"}
+        className="mt-2.5 inline-block rounded-xl focus-ring"
+      >
+        <Button size="sm" variant="secondary">
+          {loggedIn ? "내 조건 입력하기" : "로그인하기"}
+        </Button>
+      </Link>
     </div>
   );
 }

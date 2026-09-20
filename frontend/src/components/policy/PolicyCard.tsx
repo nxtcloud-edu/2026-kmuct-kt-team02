@@ -1,6 +1,6 @@
-import { Building2 } from "lucide-react";
+import { Building2, Lock } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { PolicyEvaluation } from "@/lib/contract";
+import { isEvaluated, type PolicyInfo } from "@/lib/contract";
 import { CATEGORY_LABEL, COPY } from "@/lib/labels";
 import {
   DeadlineBadge,
@@ -11,7 +11,10 @@ import {
 
 /**
  * 정책 카드 (frontend/README.md 3-5).
- * 상태 배지, 제목·기관, 혜택 한 줄, 마감 배지, 조건부 문장, 출처 줄.
+ *
+ * 판정이 붙은 정책이면 상태 배지와 조건부 문장을 보여 준다.
+ * 로그인하지 않아 판정이 없으면 배지 대신 "로그인하면 판정" 안내를 보여 준다.
+ * 근거 없는 판정을 화면에 만들어 내지 않는다.
  */
 export function PolicyCard({
   policy,
@@ -20,11 +23,13 @@ export function PolicyCard({
   updated = false,
   className,
 }: {
-  policy: PolicyEvaluation;
-  onOpen: (policy: PolicyEvaluation) => void;
+  policy: PolicyInfo;
+  onOpen: (policy: PolicyInfo) => void;
   updated?: boolean;
   className?: string;
 }) {
+  const evaluated = isEvaluated(policy);
+
   return (
     <article
       className={cn(
@@ -34,10 +39,17 @@ export function PolicyCard({
       )}
     >
       <div className="flex flex-wrap items-center gap-1.5">
-        <StatusBadge status={policy.status} swap={updated} />
+        {evaluated ? (
+          <StatusBadge status={policy.status} swap={updated} />
+        ) : (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-canvas-100 px-2.5 py-1 text-[0.875rem] font-semibold text-ink-600">
+            <Lock aria-hidden="true" className="h-3.5 w-3.5" />
+            공고 기준 안내
+          </span>
+        )}
         <DeadlineBadge deadline={policy.deadline} />
         <RecheckBadge checkedAt={policy.checked_at} dataStatus={policy.data_status} />
-        {updated && (
+        {updated && evaluated && (
           <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[0.8125rem] font-bold text-brand-700">
             {COPY.updated}
           </span>
@@ -65,7 +77,7 @@ export function PolicyCard({
         {policy.benefit}
       </p>
 
-      {policy.conditional_note && (
+      {evaluated && policy.conditional_note && (
         <p className="mt-2 text-[0.875rem] font-medium leading-relaxed text-check">
           {policy.conditional_note}
         </p>

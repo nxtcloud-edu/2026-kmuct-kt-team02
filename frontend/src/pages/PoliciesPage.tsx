@@ -4,75 +4,26 @@ import { Card, EmptyState, SectionHeading } from "@/components/ui/Surface";
 import { PolicyCard } from "@/components/policy/PolicyCard";
 import { PolicyDetailPanel } from "@/components/policy/PolicyDetailPanel";
 import { Chip } from "@/components/ui/Field";
-import { MOCK_POLICIES } from "@/lib/mock/policies";
-import { buildBadge, daysUntil, needsRecheck } from "@/lib/deadline";
+import { allPolicyInfo } from "@/lib/mock/display";
 import { CATEGORY_LABEL, COPY } from "@/lib/labels";
 import { CATEGORY_OPTIONS } from "@/lib/profileOptions";
-import { cn } from "@/lib/cn";
-import type { Category, PolicyEvaluation } from "@/lib/contract";
+import type { Category, PolicyInfo } from "@/lib/contract";
 
 type SortKey = "deadline" | "title";
 
 /**
  * 정책 모아보기.
  *
- * 프로필과 무관한 목록이라 판정 상태를 매기지 않는다. 대신 마감 배지, 출처, 확인일을 보여 주고
- * 조건 판정은 상담 화면에서 확인하도록 안내한다.
+ * 프로필과 무관한 목록이라 판정하지 않는다. 마감 배지와 출처, 확인일만 보여 주고
+ * 내가 대상인지는 대화에서 확인하도록 안내한다.
  */
 export function PoliciesPage() {
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Category[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>("deadline");
-  const [selected, setSelected] = useState<PolicyEvaluation | null>(null);
+  const [selected, setSelected] = useState<PolicyInfo | null>(null);
 
-  /** 판정 없이 표시용으로만 변환한다 */
-  const items = useMemo<PolicyEvaluation[]>(
-    () =>
-      MOCK_POLICIES.map((policy) => {
-        const badge = buildBadge(policy.apply_start, policy.apply_end);
-        const upcoming = policy.apply_start
-          ? (daysUntil(policy.apply_start) ?? 0) > 0
-          : false;
-        return {
-          policy_id: policy.policy_id,
-          title: policy.title,
-          agency: policy.agency,
-          categories: policy.categories,
-          // 목록에서는 판정하지 않으므로 중립 상태로 둔다
-          status: "check",
-          status_label: "상담에서 확인",
-          benefit: policy.benefit,
-          conditions: Object.entries(policy.condition_sources).map(
-            ([name, excerpt], index) => ({
-              name,
-              result: "unknown" as const,
-              judged_by: "rule" as const,
-              excerpt,
-              source_url: policy.source_url,
-              footnote_id: index + 1,
-              needed_field: "공고 확인 필요" as const,
-            }),
-          ),
-          conditional_note: null,
-          deadline: {
-            apply_start: policy.apply_start,
-            apply_end: policy.apply_end,
-            ...badge,
-          },
-          documents: policy.documents,
-          steps: policy.steps,
-          source_url: policy.source_url,
-          apply_url: policy.apply_url,
-          checked_at: policy.checked_at,
-          data_status: upcoming
-            ? "upcoming"
-            : needsRecheck(policy.checked_at, "verified")
-              ? "recheck"
-              : "verified",
-        };
-      }),
-    [],
-  );
+  const items = useMemo(() => allPolicyInfo(), []);
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -94,9 +45,9 @@ export function PoliciesPage() {
 
     return [...matched].sort((a, b) => {
       if (sortKey === "title") return a.title.localeCompare(b.title);
-      // 마감 임박 먼저, 상시 접수는 뒤
-      const aImminent = Number(b.deadline.is_imminent) - Number(a.deadline.is_imminent);
-      if (aImminent !== 0) return aImminent;
+      const byImminent =
+        Number(b.deadline.is_imminent) - Number(a.deadline.is_imminent);
+      if (byImminent !== 0) return byImminent;
       const aEnd = a.deadline.apply_end ?? "9999-12-31";
       const bEnd = b.deadline.apply_end ?? "9999-12-31";
       if (aEnd !== bEnd) return aEnd.localeCompare(bEnd);
@@ -191,7 +142,7 @@ export function PoliciesPage() {
       </p>
 
       {filtered.length === 0 ? (
-        <Card className={cn("mt-3")}>
+        <Card className="mt-3">
           <EmptyState
             icon={Search}
             title="조건에 맞는 제도가 없어요"

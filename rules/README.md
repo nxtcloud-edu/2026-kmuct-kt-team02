@@ -120,6 +120,53 @@ AI 없이도 정확한 1차 결과를 **1초 안에** 내는 규칙 엔진이다
 
 어느 경우에도 규칙 엔진이 멈추거나 빈 응답을 내지 않는다. 데이터 한 건이 잘못돼 있으면 그 한 건만 빠지고 나머지 결과는 정상으로 나가야 한다.
 
+## 9-1. 구현 현황과 백엔드B 연결 방법
+
+구현은 `rules/` 아래 모듈로 끝났다. **외부 의존성 없이 표준 라이브러리만 쓴다.**
+Pydantic 과 `server` 를 아는 곳은 `repository.py` 하나뿐이다. 그래서 웹 프레임워크·인증·저장 수단이 바뀌어도 판정 로직은 그대로 남는다.
+
+| 모듈 | 역할 |
+| --- | --- |
+| `constants.py` | 고정 값 전부. 문자열을 코드에 직접 쓰지 않는다 |
+| `loader.py` | 정책 로드와 필드 검증. 한 건이 잘못돼도 그 건만 빠진다 |
+| `validate.py` | 프로필 값 2차 검증. 허용 값 밖은 미확인으로 되돌린다 |
+| `conditions.py` | 나이·지역·신분·소득·추가 항목 판정 |
+| `deadline.py` | D-day, 배지, 데이터 상태 |
+| `candidates.py` | 후보 제외, 상태 결정 |
+| `sorting.py` | 정렬, 기본 표시 5개와 접힌 3개 분할 |
+| `unknowns.py` | 미확인 항목 목록 |
+| `saved.py` | 저장 정책 조회 (관심 정책 저장용) |
+| `engine.py` | 판정 진입점 |
+| `repository.py` | 백엔드B 프로토콜 어댑터 |
+
+### 연결
+
+```python
+store, rule_engine = rules.repository.build("data/policies/policies.json")
+app = create_app(rule_engine=rule_engine, policy_catalog=store)
+```
+
+`PolicyStore` 가 `server/policy_repository.py` 의 `PolicyRepository`(`get`, `count_verified`)를,
+`RuleEngineAdapter` 가 `server/rule_engine.py` 의 `RuleEngine`(`evaluate`)을 만족한다.
+
+### 계약 차이를 어댑터가 흡수한다
+
+| 문제 | 처리 |
+| --- | --- |
+| `evaluate(profile, *, limit)` 에 `today` 와 정책 데이터가 없다 | 어댑터가 주입한다. 판정 함수는 `today` 를 인자로 받아야 같은 입력에 같은 출력이 나온다. `clock` 을 바꿔 끼우면 마감 경계 테스트가 날짜와 무관해진다 |
+| `RuleEngineResult` 에 `unlikely` 목록 자리가 없다 | 계약대로 개수만 넘기고 목록은 `latest_hidden_unlikely()` 로 꺼낸다. 계약을 임의로 바꾸지 않았다 |
+| `footnote_id` 가 1 이상 정수 필수다 | 발췌가 없는 조건에도 번호를 매긴다. 각주를 걸 수 있는지는 `excerpt` 유무로 판단한다 |
+| 날짜 형식 | `YYYY-MM-DD` 만 받는다. `date.fromisoformat` 은 `20260920` 도 받지만 프론트는 거부하므로 맞췄다 |
+
+### 미확정
+
+| 항목 | 이유 |
+| --- | --- |
+| 나이 `unknown` 분기 | "경계 나이 + 공고에 기준일 별도"를 판별할 필드가 데이터에 없다. `AskableProfileField` 에 `age` 가 없어 물을 수도 없다. `met`/`unmet` 2갈래로 구현했다 |
+| 정렬 4번 "최근 대화에서 언급된 분야 우선" | 규칙 엔진 입력에 대화 맥락이 없고 `RuleEngine.evaluate` 도 프로필만 받는다. 관심 분야 일치 수까지만 구현했다 |
+| 소득 구간 경계 중복 | `under_50`(0~50)과 `50_100`(50~100)이 50에서 겹친다. 정책 상한이 정확히 50일 때 `50_100` 사용자가 미충족이 되는데 실제 소득 50%는 충족이다. 하한을 51·101·151로 두거나 미충족 비교를 `>` 로 바꿔야 한다 |
+| 자치구 필수 여부 | `../data/profiles/README.md` 6장 참고. 문서는 선택, 코드는 필수다 |
+
 ## 10. 사전 준비 체크리스트
 
 - [ ] 정렬 규칙과 D-day 규칙을 표로 정리

@@ -16,7 +16,7 @@ import { formatDotDate, formatKoreanDate } from "@/lib/deadline";
 import { sortConditions } from "@/lib/sort";
 import { CATEGORY_LABEL, COPY } from "@/lib/labels";
 import { cn } from "@/lib/cn";
-import { conditionName, type PolicyEvaluation } from "@/lib/contract";
+import { conditionName, isEvaluated, type PolicyInfo } from "@/lib/contract";
 
 /**
  * 정책 상세 패널 (frontend/README.md 3-7).
@@ -26,13 +26,14 @@ export function PolicyDetailPanel({
   policy,
   onClose,
 }: {
-  policy: PolicyEvaluation | null;
+  policy: PolicyInfo | null;
   onClose: () => void;
 }) {
   // 체크 상태는 세션 동안만 유지한다 (frontend/README.md 3-8)
   const [checked, setChecked] = useState<string[]>([]);
 
   if (!policy) return null;
+  const evaluated = isEvaluated(policy);
 
   const toggle = (key: string) =>
     setChecked((prev) =>
@@ -66,10 +67,17 @@ export function PolicyDetailPanel({
     >
       {/* 1. 머리 */}
       <div className="flex flex-wrap items-center gap-1.5">
-        <StatusBadge status={policy.status} />
+        {evaluated && <StatusBadge status={policy.status} />}
         <DeadlineBadge deadline={policy.deadline} />
         <RecheckBadge checkedAt={policy.checked_at} dataStatus={policy.data_status} />
       </div>
+
+      {!evaluated && (
+        <p className="mt-3 rounded-xl border border-line bg-canvas-50 px-3 py-2.5 text-[0.875rem] leading-relaxed text-ink-600">
+          아래는 공고에 적힌 조건이에요. 로그인해서 나이와 현재 상태를 알려주시면 조건마다
+          충족 여부를 따져서 보여드릴 수 있어요.
+        </p>
+      )}
       <p className="mt-3 text-[0.875rem] font-medium text-ink-500">
         {policy.agency} · {policy.categories.map((item) => CATEGORY_LABEL[item]).join(", ")}
       </p>
@@ -83,15 +91,22 @@ export function PolicyDetailPanel({
               key={`${conditionName(condition)}-${condition.footnote_id}`}
               className="flex items-start gap-2 rounded-xl border border-line-soft bg-white px-3 py-2.5"
             >
-              <span className="mt-0.5">
-                <ConditionIcon result={condition.result} />
-              </span>
+              {/* 판정이 없으면 결과 아이콘을 보여 주지 않는다 */}
+              {evaluated && (
+                <span className="mt-0.5">
+                  <ConditionIcon result={condition.result} />
+                </span>
+              )}
               <span className="flex-1 text-[0.9375rem] leading-relaxed text-ink-700">
-                <span className={cn("font-bold", conditionLabelClass(condition.result))}>
-                  [{CONDITION_LABEL[condition.result]}]
-                </span>{" "}
+                {evaluated && (
+                  <span
+                    className={cn("font-bold", conditionLabelClass(condition.result))}
+                  >
+                    [{CONDITION_LABEL[condition.result]}]{" "}
+                  </span>
+                )}
                 {conditionName(condition)}
-                {condition.needed_field === "공고 확인 필요" && (
+                {evaluated && condition.needed_field === "공고 확인 필요" && (
                   <span className="ml-1 text-[0.875rem] text-ink-500">
                     (공고 확인 필요)
                   </span>
@@ -134,7 +149,7 @@ export function PolicyDetailPanel({
       </section>
 
       {/* 3. 조건부 문장 */}
-      {policy.conditional_note && (
+      {evaluated && policy.conditional_note && (
         <p className="mt-4 rounded-xl border border-check-border bg-check-bg px-3 py-2.5 text-[0.9375rem] font-medium leading-relaxed text-check">
           {policy.conditional_note}
         </p>

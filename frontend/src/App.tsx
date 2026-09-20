@@ -5,7 +5,6 @@ import { AppFooter } from "@/components/layout/AppFooter";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { PageBackground } from "@/components/ui/Surface";
 import { ToastViewport } from "@/components/ui/Toast";
-import { OnboardingPage } from "@/pages/OnboardingPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { PoliciesPage } from "@/pages/PoliciesPage";
 import { LoginPage } from "@/pages/LoginPage";
@@ -30,8 +29,9 @@ export default function App() {
           <AppHeader />
           <main id="main" className="flex-1">
             <Routes>
-              <Route path="/" element={<OnboardingPage />} />
-              <Route path="/chat" element={<ChatPage />} />
+              {/* 홈이 AI 대화 화면이다 */}
+              <Route path="/" element={<ChatPage />} />
+              <Route path="/chat" element={<Navigate to="/" replace />} />
               <Route path="/policies" element={<PoliciesPage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/mypage" element={<MyPage />} />
