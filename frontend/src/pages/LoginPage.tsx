@@ -7,48 +7,42 @@ import { Card } from "@/components/ui/Surface";
 import { Logo } from "@/components/brand/Logo";
 import { useApp } from "@/providers/AppProvider";
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-
 const BRAND_POINTS = [
   "공식 공고 기반 판정 확인",
   "개인정보는 맞춤 안내에만 사용",
 ];
 
 /**
- * 로그인 화면.
+ * 프론트 데모용 로그인 화면.
  *
- * 이름과 연락처는 받지 않는다 (docs/05-interfaces.md 7장 금지 사항).
- * 계정 식별에 필요한 이메일만 쓰고, 비밀번호는 저장하지 않는다.
+ * 아이디와 비밀번호가 비어 있지 않으면 로그인 처리한다.
+ * 인증 서버를 호출하지 않으며 비밀번호는 컴포넌트 밖으로 전달하거나 저장하지 않는다.
  */
 export function LoginPage() {
   const navigate = useNavigate();
   const { signIn, showToast } = useApp();
 
-  const [email, setEmail] = useState("");
+  const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(true);
-  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [errors, setErrors] = useState<{ userId?: string; password?: string }>({});
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
 
-    const next: { email?: string; password?: string } = {};
-    if (!email.trim()) next.email = "이메일을 입력해 주세요.";
-    else if (!EMAIL_PATTERN.test(email.trim())) {
-      next.email = "이메일 형식을 확인해 주세요. 예: sodda@example.com";
-    }
-    if (!password) next.password = "비밀번호를 입력해 주세요.";
-    else if (password.length < 8) next.password = "비밀번호는 8자 이상이어야 해요.";
+    const next: { userId?: string; password?: string } = {};
+    if (!userId.trim()) next.userId = "아이디를 입력해 주세요.";
+    if (!password.trim()) next.password = "비밀번호를 입력해 주세요.";
 
     setErrors(next);
     if (Object.keys(next).length > 0) return;
 
     setSubmitting(true);
-    // 인증 서버가 없어 클라이언트 세션으로만 처리한다. 비밀번호는 어디에도 저장하지 않는다.
+    // 데모용 지연 뒤 로컬 상태만 바꾼다. 비밀번호는 어디에도 전달하지 않는다.
     window.setTimeout(() => {
-      signIn(email.trim(), remember);
+      signIn(userId.trim(), remember);
       setSubmitting(false);
       showToast("로그인했어요.");
       navigate("/mypage");
@@ -101,17 +95,18 @@ export function LoginPage() {
 
             <form onSubmit={handleSubmit} noValidate className="mt-7 space-y-4">
               <TextField
-                label="이메일"
-                type="email"
-                autoComplete="email"
-                inputMode="email"
-                placeholder="example@email.com"
+                label="아이디"
+                type="text"
+                autoComplete="username"
+                placeholder="아이디 입력"
                 required
-                value={email}
-                error={errors.email}
+                value={userId}
+                error={errors.userId}
                 onChange={(event) => {
-                  setEmail(event.target.value);
-                  if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }));
+                  setUserId(event.target.value);
+                  if (errors.userId) {
+                    setErrors((previous) => ({ ...previous, userId: undefined }));
+                  }
                 }}
               />
 
@@ -119,14 +114,14 @@ export function LoginPage() {
                 label="비밀번호"
                 type={showPassword ? "text" : "password"}
                 autoComplete="current-password"
-                placeholder="8자 이상"
+                placeholder="비밀번호 입력"
                 required
                 value={password}
                 error={errors.password}
                 onChange={(event) => {
                   setPassword(event.target.value);
                   if (errors.password) {
-                    setErrors((prev) => ({ ...prev, password: undefined }));
+                    setErrors((previous) => ({ ...previous, password: undefined }));
                   }
                 }}
                 trailing={
@@ -154,7 +149,9 @@ export function LoginPage() {
                 />
                 <button
                   type="button"
-                  onClick={() => showToast("비밀번호 재설정 안내를 보내드릴게요.")}
+                  onClick={() =>
+                    showToast("데모 로그인에서는 비밀번호 찾기를 지원하지 않아요.", "error")
+                  }
                   className="rounded text-[0.875rem] font-semibold text-brand-600 underline decoration-brand-200 decoration-2 underline-offset-2 transition-colors hover:text-brand-700 focus-ring"
                 >
                   비밀번호 찾기
@@ -177,8 +174,8 @@ export function LoginPage() {
             </p>
 
             <p className="mt-4 rounded-xl border border-line-soft bg-canvas-50 px-4 py-3 text-[0.875rem] leading-relaxed text-ink-500">
-              쏘다는 이름과 연락처를 받지 않아요. 로그인에 쓰는 이메일 외에는 저장하지
-              않습니다.
+              로그인 상태 유지 시 아이디만 이 브라우저에 저장해요. 비밀번호는 저장하거나
+              전송하지 않아요.
             </p>
           </div>
         </div>

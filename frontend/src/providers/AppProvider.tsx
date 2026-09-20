@@ -11,10 +11,13 @@ import type { ProfileInput, SessionCreateResponse } from "@/lib/contract";
 import { STORAGE_KEYS, readJSON, removeKey, writeJSON } from "@/lib/storage";
 import { createSession, isMockMode } from "@/lib/api";
 
-/** 로그인 계정. 이름과 연락처는 담지 않는다 */
+/** 프론트 데모용 로그인 상태. 서버 인증에는 사용하지 않는다. */
 interface Auth {
-  email: string;
+  userId: string;
 }
+
+/** userId로 바꾸기 전에 저장된 브라우저 데이터와의 호환용 타입 */
+type StoredAuth = Partial<Auth> & { email?: unknown };
 
 interface Toast {
   id: number;
@@ -35,7 +38,7 @@ interface AppContextValue {
   clearSession: () => void;
   /** 저장한 조건으로 맞춤 판정 세션을 만든다. 조건이 없으면 아무것도 하지 않는다 */
   startSessionFromProfile: (input?: ProfileInput) => Promise<boolean>;
-  signIn: (email: string, remember: boolean) => void;
+  signIn: (userId: string, remember: boolean) => void;
   signOut: () => void;
   toast: Toast | null;
   showToast: (message: string, tone?: Toast["tone"]) => void;
@@ -58,8 +61,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setProfileInput(storedProfile);
     }
 
-    const storedAuth = readJSON<Partial<Auth>>(STORAGE_KEYS.auth, {});
-    if (storedAuth.email) setAuth({ email: storedAuth.email });
+    const storedAuth = readJSON<StoredAuth>(STORAGE_KEYS.auth, {});
+    const storedUserId =
+      typeof storedAuth.userId === "string"
+        ? storedAuth.userId.trim()
+        : typeof storedAuth.email === "string"
+          ? storedAuth.email.trim()
+          : "";
+    if (storedUserId) setAuth({ userId: storedUserId });
 
     void isMockMode().then(setMockMode);
     setReady(true);
@@ -107,8 +116,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [profileInput, showToast],
   );
 
-  const signIn = useCallback((email: string, remember: boolean) => {
-    const next: Auth = { email };
+  const signIn = useCallback((userId: string, remember: boolean) => {
+    const next: Auth = { userId };
     setAuth(next);
     if (remember) writeJSON(STORAGE_KEYS.auth, next);
     else removeKey(STORAGE_KEYS.auth);
