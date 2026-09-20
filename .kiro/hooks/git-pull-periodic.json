@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "10분마다 git pull",
+      "trigger": "UserPromptSubmit",
+      "description": "메시지를 보낼 때마다 확인하되, 마지막 확인으로부터 10분이 지난 경우에만 fetch/pull한다. 변경이 있으면 파일 목록을 컨텍스트에 전달한다.",
+      "action": {
+        "type": "command",
+        "command": "git rev-parse --git-dir >/dev/null 2>&1 || exit 0; STAMP=\".kiro/.last-pull\"; if [ -f \"$STAMP\" ] && [ $(( $(date +%s) - $(stat -f %m \"$STAMP\") )) -lt 600 ]; then exit 0; fi; mkdir -p .kiro; touch \"$STAMP\"; git fetch origin --quiet 2>/dev/null; BRANCH=$(git rev-parse --abbrev-ref HEAD); BEFORE=$(git rev-parse HEAD); git merge --ff-only \"origin/$BRANCH\" --quiet 2>/dev/null; AFTER=$(git rev-parse HEAD); if [ \"$BEFORE\" != \"$AFTER\" ]; then echo \"[git] origin/$BRANCH 에서 새 변경을 가져왔습니다. 변경된 파일을 읽고 필요하면 steering 문서를 갱신하세요:\"; git diff --name-status \"$BEFORE\" \"$AFTER\"; fi",
+        "timeout": 45
+      }
+    }
+  ]
+}

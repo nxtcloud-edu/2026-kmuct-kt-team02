@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "세션 시작 시 git pull",
+      "trigger": "SessionStart",
+      "description": "세션이 시작될 때 origin에서 fetch 후 fast-forward pull하고, 변경된 파일 목록을 컨텍스트에 전달한다.",
+      "action": {
+        "type": "command",
+        "command": "git rev-parse --git-dir >/dev/null 2>&1 || exit 0; git fetch origin --quiet 2>/dev/null; BRANCH=$(git rev-parse --abbrev-ref HEAD); BEFORE=$(git rev-parse HEAD); git merge --ff-only \"origin/$BRANCH\" --quiet 2>/dev/null; AFTER=$(git rev-parse HEAD); if [ \"$BEFORE\" != \"$AFTER\" ]; then echo \"[git] origin/$BRANCH 에서 새 변경을 가져왔습니다. 변경된 파일을 읽고 필요하면 steering 문서를 갱신하세요:\"; git diff --name-status \"$BEFORE\" \"$AFTER\"; else AHEAD=$(git rev-list --count \"origin/$BRANCH..HEAD\" 2>/dev/null); BEHIND=$(git rev-list --count \"HEAD..origin/$BRANCH\" 2>/dev/null); echo \"[git] 원격에 새 변경 없음 (branch=$BRANCH, ahead=$AHEAD, behind=$BEHIND)\"; if [ \"$BEHIND\" != \"0\" ]; then echo \"[git] 주의: fast-forward 불가. 로컬 커밋과 갈라져 있어 수동 병합이 필요합니다.\"; fi; fi",
+        "timeout": 60
+      }
+    }
+  ]
+}

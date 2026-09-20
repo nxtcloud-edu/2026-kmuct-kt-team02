@@ -1,0 +1,43 @@
+# 줄바꿈 통일 (macOS · Windows 혼용 개발 대응)
+#
+# 저장소 안에서는 항상 LF로 저장하고, 체크아웃할 때도 LF로 내려준다.
+# 윈도우에서 커밋한 CRLF가 raw_text에 섞여 들어오면 인용 검증이 깨지므로
+# core.autocrlf 설정에 의존하지 않고 저장소 차원에서 강제한다.
+# (런타임 방어는 ai/citation/normalize.py 가 별도로 한다. 이건 1차 방어선이다.)
+
+* text=auto eol=lf
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.jsonl text eol=lf
+*.csv   text eol=lf
+*.tsv   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.txt   text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.sh    text eol=lf
+
+# 윈도우 전용 스크립트는 CRLF 유지 (LF면 실행되지 않음)
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# 바이너리는 손대지 않는다
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.pdf   binary
+*.xlsx  binary
+*.woff  binary
+*.woff2 binary
+*.mp4   binary
+*.mov   binary
