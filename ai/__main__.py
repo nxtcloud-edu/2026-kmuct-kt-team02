@@ -343,13 +343,17 @@ def cmd_chat(message: str = "") -> int:
         print(f"주의: 모델을 부를 수 없다 ({', '.join(rt.missing)}).")
         print("      판정은 건너뛰고 답변은 실패한다. 카드는 그대로 나간다.")
 
-    # 해석 프롬프트가 아직 없으므로(pipeline.PROMPT_TODO) 해석 모델을 부르지 않고
-    # 의도만 넣는다. 서버도 같은 상태다. 문안이 채워지면 이 자리에 모델 출력이 들어간다.
     model_output: Dict[str, Any] = {"intent": fields.FIND_POLICY}
     if message:
         print(f"입력            {message!r}")
-        print("주의: 해석 프롬프트가 아직 비어 있어 메시지는 해석되지 않는다.")
-        print("      의도만 find_policy 로 넣고 진행한다.")
+        if rt.interpret is None:
+            print("주의: 모델이 없어 해석을 건너뛴다. 의도만 find_policy 로 넣는다.")
+        else:
+            _rule("해석 (3단계)")
+            started = time.monotonic()
+            model_output = rt.interpret(message, SAMPLE_PROFILE)
+            print(f"걸린 시간       {time.monotonic() - started:.2f}초")
+            print(f"모델 출력       {model_output}")
 
     _rule("한 턴")
     started = time.monotonic()
@@ -385,6 +389,18 @@ def cmd_chat(message: str = "") -> int:
     else:
         print(result.answer_text)
         print(f"\n(델타 {len(result.answer_deltas)}개로 흘러간다)")
+
+    _rule("프로필 갱신")
+    if result.profile_update:
+        print(f"  바뀐 항목     {result.profile_update.get('changed_fields')}")
+        print(f"  안내          {result.profile_update.get('message') or '(없음)'}")
+    else:
+        print("  (바뀐 것 없음)")
+    if result.needs_planned_confirmation:
+        print("  → 바뀐 뒤 기준으로 볼지 확인 질문이 필요하다 (planned 변경 보류 중)")
+    if result.stop_here:
+        print()
+        print(f"※ 범위 밖·잡담으로 턴을 끝냈다: {result.fixed_reply}")
 
     _rule("후속 질문")
     if result.followup:

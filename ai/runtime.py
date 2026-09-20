@@ -99,12 +99,19 @@ class Runtime:
     gateway        모델 호출 게이트웨이. 예산과 지표를 들고 있다
     judge_policies ``turn.run_turn`` 에 넘길 판정 함수. 키가 없으면 None
     answer_writer  ``turn.run_turn`` 에 넘길 답변 작성 함수. 키가 없으면 None
+    interpret      사용자 메시지를 해석 결과 dict 로. 키가 없으면 None
     missing        무엇이 없어서 건너뛰는지. 비어 있어야 정상이다
+
+    ``interpret`` 는 ``turn.run_turn`` 의 ``interpretation_output`` 에 넣을 값을 만든다.
+    ``run_turn`` 이 직접 부르지 않는 이유: 후속 질문 버튼 답변은 해석을 **건너뛰는** 것이
+    설계이고(``docs/03-api-contract.md`` 3장, 그 경로로 3초를 절약한다), 언제 건너뛸지는
+    서버가 안다. ``run_turn`` 안에 넣으면 그 판단이 AI 쪽에 숨는다.
     """
 
     gateway: llm.Gateway
     judge_policies: Optional[Any] = None
     answer_writer: Optional[Any] = None
+    interpret: Optional[Any] = None
     missing: Tuple[str, ...] = ()
 
     @property
@@ -159,6 +166,37 @@ def _answer_writer(gateway: llm.Gateway, on_delta: Optional[Any] = None):
         return text if isinstance(text, str) else ""
 
     return write
+
+
+def _interpreter(gateway: llm.Gateway):
+    """사용자 메시지를 해석 결과 dict 로 바꾸는 함수를 만든다.
+
+    실패하면 ``prompts.INTERPRET_FALLBACK`` (빈 dict)을 돌려준다. **예외를 던지지 않는다.**
+    ``interpret.from_model_output({})`` 은 "변경 없음"이 되고 턴은 계속 돈다 —
+    프로필이 그대로여도 후보 선정과 답변은 나가야 한다(``pipeline.interpret_turn`` 주석).
+    """
+    from ai.conversation import prompts
+
+    def interpret_message(message: Any, profile: Optional[Mapping[str, Any]] = None) -> Any:
+        text = str(message or "").strip()
+        if not text:
+            # 빈 메시지에 모델을 부르지 않는다. 후속 질문 버튼 답변처럼 해석할 것이
+            # 없는 경로에서 예산을 태우지 않기 위해서다.
+            return prompts.INTERPRET_FALLBACK
+        try:
+            outcome = gateway.call_structured(
+                llm.CallSite.INTERPRET,
+                system=prompts.INTERPRET_SYSTEM,
+                user=prompts.build_interpret_prompt(text, profile),
+                schema=prompts.INTERPRET_SCHEMA,
+                fallback=prompts.INTERPRET_FALLBACK,
+            )
+        except Exception:  # noqa: BLE001 - 해석 실패가 카드를 지우지 않게
+            return prompts.INTERPRET_FALLBACK
+        # ok 가 거짓이면 data 에 폴백이 들어 있다. 그대로 넘기면 "변경 없음"이 된다.
+        return outcome.data
+
+    return interpret_message
 
 
 def for_turn(
@@ -225,11 +263,13 @@ def for_turn(
             missing.append(MISSING_JUDGE_MODULE)
 
     answer_writer = _answer_writer(gateway, on_delta) if adapter is not None else None
+    interpret_message = _interpreter(gateway) if adapter is not None else None
 
     return Runtime(
         gateway=gateway,
         judge_policies=judge_policies,
         answer_writer=answer_writer,
+        interpret=interpret_message,
         missing=tuple(dict.fromkeys(missing)),
     )
 

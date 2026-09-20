@@ -35,9 +35,9 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import Any, List, Mapping, Optional
 
-from . import answer
+from . import answer, fields
 
 # ---------------------------------------------------------------------------
 # 시스템 지시문
@@ -188,4 +188,154 @@ __all__ = [
     "no_date_math_text",
     "rule_text",
     "output_format_text",
+]
+
+
+# ---------------------------------------------------------------------------
+# 해석 프롬프트 (3단계)
+# ---------------------------------------------------------------------------
+
+#: 해석 시스템 지시문. **상수다.** 답변 쪽과 같은 이유(캐시 접두사).
+INTERPRET_SYSTEM = (
+    "너는 사용자 메시지에서 의도와 프로필 변경만 뽑아내는 추출기다. "
+    "설명하지 않고 JSON 하나만 출력한다. "
+    "사용자가 **분명히 말한 것만** 담는다. 추측해서 채우지 않는다."
+)
+
+
+def _value_lines() -> List[str]:
+    """항목 이름과 허용 값 목록. 표에서 끌어온다.
+
+    ``interpret.ALLOWED_VALUES`` 와 ``EXTRA_FIELD_VALUES`` 가 정본이다. 여기에 목록을 다시
+    적으면 표를 고칠 때 프롬프트만 낡고, 모델이 표 밖 값을 내서 ``interpret`` 이 조용히
+    버린다. 그 증상은 "말했는데 프로필이 안 바뀐다"로만 보인다.
+    """
+    from . import interpret
+
+    lines: List[str] = []
+    for name in interpret.PROFILE_FIELD_ORDER:
+        if name == fields.REGION:
+            continue  # 아래에서 따로 "내보내지 말라"고 적는다
+        if name == fields.AGE:
+            lines.append(f"- {name}: 정수 {interpret.AGE_MIN}~{interpret.AGE_MAX}")
+            continue
+        if name == fields.DISTRICT:
+            lines.append(f"- {name}: 서울 25개 자치구명 (예: 관악구)")
+            continue
+        if name == fields.CATEGORIES:
+            continue  # category_changes 로만 받는다
+        allowed = interpret.ALLOWED_VALUES.get(name)
+        if allowed:
+            lines.append(f"- {name}: {', '.join(sorted(allowed))}")
+    return lines
+
+
+def interpret_rules_text() -> str:
+    """해석 규칙 문안.
+
+    ``interpret.from_model_output`` 이 받아들이는 키와 정확히 같은 말을 해야 한다. 키가
+    어긋나면 모델 출력이 통째로 버려지고, ``interpret`` 은 예외 없이 "변경 없음"을 낸다.
+    """
+    from . import interpret
+
+    lines = [
+        "아래 JSON 하나만 출력한다. 설명, 머리말, 코드 블록을 붙이지 않는다.",
+        "",
+        '{"intent": "...", "profile_changes": [], "extra_answers": [],'
+        ' "category_changes": {"add": [], "remove": []}, "mentioned_policies": []}',
+        "",
+        f"intent 는 하나만 고른다: {', '.join(sorted(fields.INTENTS))}",
+        "- find_policy: 제도를 찾아 달라, 뭐가 있냐",
+        "- policy_question: 특정 제도의 조건·금액·서류를 묻는다",
+        "- compare: 두 제도를 비교해 달라",
+        "- result_only: 카드만 다시 보여 달라",
+        "- out_of_scope: 서울 청년 공공지원제도와 무관한 질문",
+        "- smalltalk: 인사, 잡담",
+        "",
+        "profile_changes 와 extra_answers 는 같은 모양이다:",
+        '  {"field": "항목이름", "value": "허용값", "timing": "current" 또는 "planned"}',
+        f"- timing 은 지금 사실이면 {fields.CURRENT}, 아직 안 된 계획이면 {fields.PLANNED} 다.",
+        "  '휴학했어요'는 current, '다음 학기에 휴학할 예정이에요'는 planned.",
+        "  애매하면 current 로 둔다.",
+        "",
+        "쓸 수 있는 항목과 값:",
+    ]
+    lines.extend(_value_lines())
+    lines.extend(
+        [
+            "",
+            "category_changes 의 값: " + ", ".join(sorted(interpret.CATEGORY_VALUES)),
+            "  관심 분야를 더하라면 add, 빼라면 remove 에 넣는다.",
+            "",
+            "지키는 것",
+            "- **분명히 말한 것만 담는다.** 추측해서 채우면 프로필이 조용히 틀려진다.",
+            "  '돈이 없어요'는 소득 구간이 아니다. 값을 넣지 않는다.",
+            "- 표에 없는 항목 이름이나 값을 만들지 않는다. 빈 배열로 두는 것이 맞는 답이다.",
+            "- 숫자로 말한 소득을 구간으로 바꾸지 않는다. '월 150만원'은 income_bracket 이 아니다.",
+            "  개인 소득과 가구 소득 기준이 달라서 옮길 수 없다.",
+            f"- {fields.REGION} 은 바꿀 수 없다. 서울 고정이므로 내보내지 않는다.",
+            "- 말하지 않은 항목은 넣지 않는다. 빈 배열과 빈 객체를 그대로 둔다.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def build_interpret_prompt(message: str, profile: Optional[Mapping[str, Any]] = None) -> str:
+    """해석 사용자 프롬프트. ``llm.Gateway.call_structured`` 의 ``user`` 에 넣는다.
+
+    ``llm.assemble_prompt`` 를 쓰지 않는다. 그 함수는 답변 작성용 블록 네 개(규칙·원문·
+    프로필·출력 규칙)를 조립하고 캐시 접두사를 맞추는데, 해석은 원문 발췌가 없고 매 턴
+    메시지가 바뀌어 캐시가 걸리지 않는다. 블록을 억지로 맞추면 빈 블록이 생긴다.
+
+    현재 프로필을 함께 넣는 이유: "관악구로 이사했어요"에서 바뀐 값만 뽑아야 하고, 이미
+    같은 값이면 변경이 아니다. 프로필을 안 주면 모델이 매번 전체를 다시 내보낸다.
+    """
+    lines = [interpret_rules_text(), "", "현재 프로필:"]
+    data = dict(profile) if isinstance(profile, Mapping) else {}
+    if data:
+        for key in sorted(data):
+            value = data[key]
+            if isinstance(value, (list, tuple, set, frozenset)):
+                shown = ", ".join(str(item) for item in value)
+            else:
+                shown = "" if value is None else str(value)
+            lines.append(f"  {key}: {shown}")
+    else:
+        lines.append("  (없음)")
+    lines.extend(["", "사용자 메시지:", str(message or "")])
+    return "\n".join(lines)
+
+
+#: 해석 출력 스키마. ``llm.Gateway.call_structured`` 가 요구한다.
+#:
+#: 게이트웨이에 실제로 넘기지는 않는다(``ai/gateway.py`` 의 ``complete`` 주석). 스키마가
+#: 필요한 것은 ``call_structured`` 의 계약이고, 파싱은 ``interpret.parse_model_json`` 이
+#: 앞뒤 설명이 붙어 와도 JSON 만 떼어 낸다.
+INTERPRET_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "intent": {"type": "string"},
+        "profile_changes": {"type": "array"},
+        "extra_answers": {"type": "array"},
+        "category_changes": {"type": "object"},
+        "mentioned_policies": {"type": "array"},
+    },
+    "required": ["intent"],
+}
+
+#: 해석 실패 시 쓸 값. **"변경 없음"이다.**
+#:
+#: ``call_structured`` 가 폴백을 요구하고, 그 모양이 호출 지점의 스키마라 여기서 정한다.
+#: 빈 dict 를 쓰는 이유: ``interpret.from_model_output({})`` 은 의도를
+#: ``interpret.DEFAULT_INTENT`` 로 채우고 변경 목록을 비운다. 여기서 의도를 직접 적으면
+#: 기본값이 두 곳에 생기고, ``interpret`` 쪽 기본값을 고쳤을 때 이 자리만 낡는다.
+INTERPRET_FALLBACK: dict = {}
+
+
+__all__ = __all__ + [
+    "INTERPRET_SYSTEM",
+    "INTERPRET_SCHEMA",
+    "INTERPRET_FALLBACK",
+    "interpret_rules_text",
+    "build_interpret_prompt",
 ]
