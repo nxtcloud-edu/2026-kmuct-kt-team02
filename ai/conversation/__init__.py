@@ -33,6 +33,7 @@ AI 가 하는 것과 코드가 하는 것
 | ``related`` | 관련 질문 칩 고르기 (P1) |
 | ``cases`` | 해석 테스트 10개와 대화 평가 C1~C8 데이터 |
 | ``pipeline`` | **서버가 부를 유일한 입구.** 한 턴의 순서 |
+| ``handoff`` | **서버 모델과 이 패키지 dict 사이의 유일한 변환 지점** (dict 만 낸다) |
 
 ## 서버는 ``pipeline`` 만 부르면 된다
 
@@ -71,6 +72,7 @@ _MODULE_NAMES = (
     "related",
     "cases",
     "pipeline",
+    "handoff",
 )
 
 # 불러오지 못한 모듈과 그 이유. 비어 있어야 정상이다.
@@ -93,6 +95,7 @@ llm: Optional[ModuleType] = _loaded.get("llm")
 related: Optional[ModuleType] = _loaded.get("related")
 cases: Optional[ModuleType] = _loaded.get("cases")
 pipeline: Optional[ModuleType] = _loaded.get("pipeline")
+handoff: Optional[ModuleType] = _loaded.get("handoff")
 
 
 def loaded_modules() -> List[str]:
@@ -110,6 +113,7 @@ __all__ = [
     "related",
     "cases",
     "pipeline",
+    "handoff",
     "MISSING_MODULES",
     "loaded_modules",
 ]

@@ -269,9 +269,12 @@ PLANNED_BASIS_FIELD = "planned_basis"
 # 하나의 틀로 밀면 "있음 기준으로 볼까요"(고용보험)처럼 무슨 말인지 모르는 문장이 나온다.
 # 조사(으로/로)가 필요한 형태는 일부러 피했다. 조사 선택을 여기서 또 구현하면
 # ``interpret`` 과 같은 규칙이 두 곳에 생긴다.
+#
+# ``fields.REGION`` 행은 없다. 거주지는 `seoul` 고정이라(docs/01-glossary-profile.md 2장)
+# ``interpret._clean_change`` 가 `region` 변경을 timing 과 무관하게 버린다. planned 로 온
+# 거주지 변경도 ``held`` 에 들어가지 않으므로 이 질문은 만들어질 수 없었다.
 PLANNED_BASIS_QUESTIONS: Dict[str, str] = {
     fields.AGE: "{label} 기준으로 볼까요, 지금 기준으로 볼까요?",
-    fields.REGION: "{label} 기준으로 볼까요, 지금 기준으로 볼까요?",
     fields.DISTRICT: "{label} 기준으로 볼까요, 지금 기준으로 볼까요?",
     fields.STATUS: "{label} 기준으로 볼까요, 지금 기준으로 볼까요?",
     fields.INCOME_BRACKET: "가구 소득 {label} 기준으로 볼까요, 지금 기준으로 볼까요?",
@@ -293,9 +296,9 @@ PLANNED_BASIS_QUESTION_FALLBACK = "바뀐 뒤 기준으로 볼까요, 지금 기
 
 # 항목별 이유 문구. 항목 이름이 문장에 들어가므로 항목마다 따로 적는다.
 # 조사를 코드로 고르지 않기 위해 완성된 문장으로 둔다 (interpret.NOTICE_TEMPLATES 와 같은 방식).
+# `region` 행은 위 질문 틀과 같은 이유로 없다.
 PLANNED_BASIS_REASONS: Dict[str, str] = {
     fields.AGE: "나이가 바뀌면 맞는 제도가 달라져요",
-    fields.REGION: "거주지가 바뀌면 맞는 제도가 달라져요",
     fields.DISTRICT: "사는 곳이 바뀌면 맞는 제도가 달라져요",
     fields.STATUS: "신분이 바뀌면 맞는 제도가 달라져요",
     fields.INCOME_BRACKET: "가구 소득이 바뀌면 판정이 달라져요",

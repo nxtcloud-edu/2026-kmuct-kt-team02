@@ -549,6 +549,109 @@ class TestBuildSkeleton(unittest.TestCase):
         skeleton = build_skeleton([policy(title="청년월세지원", deadline={"is_imminent": True})])
         self.assertIn("청년월세지원", skeleton.deadline_line)
 
+
+class TestDeadlineBadgeFromDDay(unittest.TestCase):
+    """``badge`` 가 비었을 때 ``d_day`` 로 만드는 배지 문구.
+
+    이 테스트가 지키려는 계약
+      1. 배지 문구 표(docs/03-api-contract.md 4-2: 오늘 마감 / 마감 임박 D-n / D-n /
+         상시 접수 / 접수 예정)에 없는 문구를 이 모듈이 만들지 않는다. 서버
+         ``Deadline.d_day`` 는 ``int | None`` 이라 0 과 음수를 막지 않으므로, 값을 그대로
+         끼우면 마감이 지난 정책에 ``"D--3"`` 이 나갔다.
+      2. 문구를 만들 수 없으면 배지만 비운다. 마감 임박 여부는 ``is_imminent`` 가 정하고
+         (``related.py`` 도 같은 규칙) ``d_day`` 로 그 판단을 뒤집지 않는다. 그래서
+         제목은 문장에 남는다.
+    """
+
+    # (설명, d_day, 문장에 있어야 하는 것, 문장에 없어야 하는 것)
+    CASES = (
+        ("양수는 표의 D-n 형태로 만든다", 5, "D-5", None),
+        ("1 은 경계값이라 만든다", 1, "D-1", None),
+        # 표는 마감일이 오늘이면 "오늘 마감" 이라 하고 "D-0" 은 없다. 어느 문구를 쓸지
+        # 고르는 일은 날짜를 아는 서버의 몫이라 여기서는 비운다.
+        ("0 은 표에 문구가 없어 비운다", 0, None, "D-0"),
+        ("음수는 사람이 읽을 수 없는 문구가 된다", -3, None, "D--3"),
+        ("큰 음수도 같다", -120, None, "D--120"),
+        ("None 이면 만들 것이 없다", None, None, "D-None"),
+        ("문자열은 정수로 읽지 않는다", "곧", None, "D-곧"),
+        ("음수 문자열도 읽지 않는다", "-3", None, "D--3"),
+    )
+
+    def test_표에_없는_배지_문구를_만들지_않는다(self):
+        for label, d_day, expected, forbidden in self.CASES:
+            with self.subTest(case=label, d_day=d_day):
+                line = build_skeleton(
+                    [
+                        policy(
+                            title="청년월세지원",
+                            deadline={"is_imminent": True, "d_day": d_day},
+                        )
+                    ]
+                ).deadline_line
+                self.assertIsNotNone(line, f"{label}: 마감 문장이 사라졌다")
+                self.assertIn(
+                    "청년월세지원", line, f"{label}: 제목까지 사라졌다 ({line!r})"
+                )
+                if expected is not None:
+                    self.assertIn(expected, line, f"{label}: {line!r}")
+                if forbidden is not None:
+                    self.assertNotIn(forbidden, line, f"{label}: {line!r}")
+
+    def test_음수_d_day에_D_두개가_나오지_않는다(self):
+        """``"D--3"`` 을 직접 겨냥한다. 마감이 지난 정책의 배지 문구다."""
+        line = build_skeleton(
+            [policy(title="청년월세지원", deadline={"is_imminent": True, "d_day": -3})]
+        ).deadline_line
+        self.assertNotIn("D--", line, f"음수를 그대로 끼웠다: {line!r}")
+        self.assertNotIn("D-", line, f"음수로 배지를 만들었다: {line!r}")
+        self.assertNotIn("3", line, f"남은 일수를 문장에 담았다: {line!r}")
+
+    def test_배지가_이미_있으면_d_day를_보지_않는다(self):
+        """서버가 준 문구가 있으면 그것을 인용한다. 음수 d_day 가 섞여도 문구가 이긴다."""
+        for label, d_day in (("음수", -3), ("0", 0), ("None", None), ("문자열", "곧")):
+            with self.subTest(case=label, d_day=d_day):
+                line = build_skeleton(
+                    [
+                        policy(
+                            title="청년월세지원",
+                            deadline={
+                                "is_imminent": True,
+                                "badge": "오늘 마감",
+                                "d_day": d_day,
+                            },
+                        )
+                    ]
+                ).deadline_line
+                self.assertIn("오늘 마감", line, f"{label}: {line!r}")
+                self.assertNotIn("D-", line, f"{label}: d_day 로 배지를 다시 만들었다 ({line!r})")
+
+    def test_제목도_없고_배지도_만들_수_없으면_문장에서_빠진다(self):
+        """빈 자리를 문장에 남기면 "마감이 가까운 제도가 있어요: ." 가 나간다."""
+        line = build_skeleton(
+            [policy(title="", deadline={"is_imminent": True, "d_day": -3})]
+        ).deadline_line
+        self.assertIsNone(line, f"빈 마감 문장이 만들어졌다: {line!r}")
+
+    def test_배지를_만들_수_없는_정책과_만들_수_있는_정책이_섞여도_된다(self):
+        """한 정책의 d_day 가 음수라고 다른 정책의 배지가 사라지면 안 된다."""
+        line = build_skeleton(
+            [
+                policy(
+                    policy_id="A",
+                    title="지난제도",
+                    deadline={"is_imminent": True, "d_day": -3},
+                ),
+                policy(
+                    policy_id="B",
+                    title="청년월세지원",
+                    deadline={"is_imminent": True, "d_day": 3},
+                ),
+            ]
+        ).deadline_line
+        self.assertIn("지난제도", line)
+        self.assertIn("청년월세지원 D-3", line, f"{line!r}")
+        self.assertNotIn("D--3", line, f"{line!r}")
+
     def test_제목이_없는_정책은_설명_자리를_만들지_않는다(self):
         """빈 제목으로 자리를 열면 모델이 정책명을 지어낸다."""
         skeleton = build_skeleton(
