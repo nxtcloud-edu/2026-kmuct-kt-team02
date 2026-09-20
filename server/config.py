@@ -11,6 +11,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+#: 한 턴의 계약 상한 (`docs/03-api-contract.md` 1장 표와 9장 13단계). 이 값을 넘기면
+#: 그때까지의 결과로 `done` 을 보내야 한다.
+#:
+#: 여기 두는 이유: 단계별 배분은 `server/orchestrator.py` 의 `OrchestratorTimeouts` 가
+#: 하지만 **상한 자체는 설정값**이라 환경에서 줄일 수 있어야 한다(느린 회선 시연 등).
+#: 오케스트레이터가 이 모듈을 읽는 방향은 안전하다. `config` 는 잎 모듈이다.
+TURN_BUDGET_CEILING_S = 20.0
+
 _DEFAULT_LOCALHOST_ORIGINS = ",".join(
     (
         "http://localhost:3000",
@@ -72,6 +80,34 @@ def _validate_local_origins(origins: tuple[str, ...]) -> tuple[str, ...]:
     return origins
 
 
+def _parse_turn_budget(raw_value: str | None) -> float:
+    """한 턴 예산. 비었으면 계약 상한을 쓴다.
+
+    상한보다 **크게** 주는 것은 막는다. 계약이 20초이므로 그보다 긴 값을 허용하면
+    설정 한 줄로 계약을 깰 수 있다. 줄이는 것은 허용한다 — 느린 환경에서 폴백을
+    빨리 보여 주는 쪽이 사용자에게 낫다.
+    """
+    text = (raw_value or "").strip()
+    if not text:
+        return TURN_BUDGET_CEILING_S
+    try:
+        budget = float(text)
+    except ValueError as exc:
+        raise ConfigurationError(
+            "TURN_BUDGET_SECONDS must be a positive number of seconds"
+        ) from exc
+    if budget <= 0:
+        raise ConfigurationError(
+            "TURN_BUDGET_SECONDS must be a positive number of seconds"
+        )
+    if budget > TURN_BUDGET_CEILING_S:
+        raise ConfigurationError(
+            f"TURN_BUDGET_SECONDS must not exceed the contract ceiling "
+            f"of {TURN_BUDGET_CEILING_S:g}s"
+        )
+    return budget
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     """Validated server settings loaded from environment variables."""
@@ -80,6 +116,8 @@ class Settings:
     s3_cors_origins: tuple[str, ...]
     llm_adapter_name: str | None
     session_ttl_seconds: int = 1800
+    #: 한 턴 전체 예산. 계약 상한보다 크게 줄 수 없다.
+    turn_budget_seconds: float = TURN_BUDGET_CEILING_S
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "Settings":
@@ -108,6 +146,7 @@ class Settings:
             s3_cors_origins=s3_origins,
             llm_adapter_name=adapter_name,
             session_ttl_seconds=session_ttl_seconds,
+            turn_budget_seconds=_parse_turn_budget(source.get("TURN_BUDGET_SECONDS")),
         )
 
     @property

@@ -25,6 +25,13 @@ AI B 의 인용 검증이 실패하면 그 조건은 ``unknown`` 으로 내려�
 이미 ``[2]`` 를 쓴 상태다. 화면에는 연결되지 않는 각주 번호가 남고, 사용자는 근거가 있는
 줄 알고 읽는다. 이게 가장 위험한 실패라서 별도 코드로 잡는다.
 
+``mismatched_footnote`` 를 함께 잡아야 하는 이유
+-----------------------------------------------
+``unknown_footnote`` 는 번호가 **있는지**만 본다. 그래서 모델이 정책 A 문장에 정책 B 의
+번호를 붙이면 통과한다. 화면에서는 각주를 눌렀을 때 다른 제도의 발췌가 뜬다. 근거가 있는
+것처럼 보이면서 근거가 아니라는 점에서 근거 없는 단정과 같은 급이고, 각주를 확인하는
+사람에게만 보이는 실패라 더 오래 남는다. 번호가 어느 정책 것인지는 2-1 절이 정한다.
+
 알려진 한계 (오탐·미탐)
 -----------------------
 - 금지 표현은 어미 목록으로 잡는다. "대상이라고 보여요", "받으실 수 있으실 거예요" 처럼
@@ -36,6 +43,9 @@ AI B 의 인용 검증이 실패하면 그 조건은 ``unknown`` 으로 내려�
   제외한다. 제도명에 다른 조합이 들어오면 오탐이 날 수 있다.
 - 문장 분리는 마침표·물음표·느낌표·줄바꿈 기준이다. "2026. 3. 1." 같은 날짜와 "3.5%" 는
   따로 막았지만, 목차 번호("1. 첫째")는 여전히 한 문장으로 잘린다.
+- 각주 소유 검사는 **정책 제목이 문장에 나올 때만** 한다. 제목 대신 줄임말을 쓴 문장은
+  판정하지 않는다(미탐). 제목이 없는 문장(요약·마감·안내)까지 판정하면 답변이 고정 문구
+  한 줄로 줄어들어, 고치려던 문제보다 큰 실패가 된다. 자세한 근거는 2-1 절에 있다.
 - ``needs_footnote`` 는 낱말 신호로 판단한다. "조건", "대상" 이 비유로 쓰인 문장은 각주를
   요구해서 오탐이 되고, 신호 낱말 없이 판정을 암시하는 문장("그럼 신청하시면 돼요")은
   미탐이다. 오탐은 문장이 사라지는 쪽이라 손해가 작고, 미탐은 근거 없는 문장이 나가는
@@ -253,6 +263,162 @@ def _as_int(value: Any) -> Optional[int]:
 
 
 # ---------------------------------------------------------------------------
+# 2-1. 각주가 어느 정책 것인가 (docs/03-api-contract.md 5-1 policy_id, 4-1 footnote_id)
+# ---------------------------------------------------------------------------
+#
+# 번호가 **존재하는지**만 보던 검사(``unknown_footnote``)로는 잡히지 않는 실패가 있다.
+# 모델이 정책 A 를 설명한 문장에 정책 B 의 각주 번호를 붙이면, 번호는 목록에 있으므로
+# 통과하고 화면에서는 각주를 눌렀을 때 다른 제도의 발췌가 뜬다. 근거가 있는 것처럼
+# 보이면서 근거가 아니라는 점에서 근거 없는 단정보다 나쁘다.
+#
+# 번호→정책 대응의 정본은 ``footnotes`` 다
+# ----------------------------------------
+# 두 곳에서 만들 수 있다. ``footnotes`` 항목의 ``policy_id``(5-1)와 정책 판정 결과의
+# ``conditions[].footnote_id``(4-1). **``footnotes`` 를 정본으로 쓴다.**
+#   1. 화면이 각주를 그리는 목록이 ``footnotes`` 다. 사용자가 번호를 눌러 보게 되는
+#      연결이 그것이므로, 검사도 같은 목록을 봐야 화면과 어긋나지 않는다.
+#   2. ``validate`` 가 번호 존재 여부를 이미 ``footnotes`` 로 판단한다. 존재는 이 목록으로,
+#      소유는 다른 목록으로 보면 한쪽만 고쳐졌을 때 두 검사가 다른 말을 한다.
+#   3. 인용 검증에 실패한 조건은 ``unknown`` 으로 내려가 발췌가 비워지고 각주 목록에서
+#      빠진다(4-3). 즉 ``footnotes`` 가 검증을 통과한 뒤의 상태고, ``conditions`` 는 그
+#      전 상태다. 뒤의 상태가 정본이다.
+# ``conditions`` 는 **빈 자리를 채울 때만** 쓴다. 각주 목록을 아예 못 받은 경우(서버가
+# 목록만 따로 넘기지 않는 경로)와 항목에 ``policy_id`` 가 없는 경우다. 두 목록이 같은
+# 번호를 다른 정책 것이라고 말하면 ``footnotes`` 를 따른다.
+#
+# 문장이 어느 정책을 말하는지는 **제목이 나오는지**로 본다
+# ------------------------------------------------------
+# 제목은 데이터 값 그대로 답변에 쓰이므로(README 6장) 문장에 그대로 나온다. 제목이 나오지
+# 않는 문장은 **판정 대상이 아니다.** 요약("제도 2개를 찾았어요"), 고정 문구, 조건 안내처럼
+# 특정 제도를 가리키지 않는 문장까지 지우면 답변이 고정 문구 한 줄로 줄어든다. 그건
+# ``empty_after_sanitize`` 와 같은 실패고, 고치려던 문제보다 크다.
+#
+# 알려진 한계
+#   - 제목 대신 줄임말("월세 지원")을 쓴 문장은 판정하지 않는다(미탐). 제목 표기를 넓히면
+#     정상 문장을 지우기 시작한다.
+#   - 한 제목이 다른 제목에 포함되면("청년월세지원" ⊂ "청년월세지원플러스") 두 정책을 모두
+#     언급한 것으로 본다. 언급이 늘어나면 허용 번호도 늘어나므로 지우는 쪽이 아니라
+#     남기는 쪽으로 틀린다.
+#   - 소유 정책을 모르는 번호는 판정하지 않는다. 모르는 값으로 문장을 지우지 않는다.
+
+# 제목 대조용 정규화. 공백과 가운뎃점만 지운다. 모델이 "청년 월세 지원" 처럼 띄어 쓰는 일이
+# 흔해서다. 그 밖의 글자는 건드리지 않는다. 더 지우면 서로 다른 제목이 같아질 수 있다.
+_RE_TITLE_NOISE = re.compile(r"[\s·]+")
+
+# 이보다 짧은 제목은 대조에 쓰지 않는다. 두 글자 제목("동행")은 다른 낱말 안에 우연히
+# 들어가기 쉽고, 그러면 언급하지 않은 정책을 언급했다고 보게 된다.
+_MIN_TITLE_LEN = 3
+
+
+def _pack(text: Any) -> str:
+    """제목 대조용으로 공백을 지운 문자열."""
+    return _RE_TITLE_NOISE.sub("", str(text or ""))
+
+
+def _mapping_rows(raw: Any, wrappers: Sequence[str] = ()) -> List[Mapping[str, Any]]:
+    """무엇이 오든 dict 목록으로. 읽을 수 없는 값은 조용히 버린다.
+
+    ``known_footnote_ids`` 와 같은 방침이다. 각주 하나, 정책 하나의 모양이 이상해서 답변
+    단계가 통째로 실패하는 것이 손해가 더 크다.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, Mapping):
+        for wrapper in wrappers:
+            inner = raw.get(wrapper)
+            if inner is not None and not isinstance(inner, (str, bytes)):
+                return _mapping_rows(inner)
+        return [raw]
+    if isinstance(raw, (str, bytes, int, float, bool)):
+        return []
+    try:
+        items = list(raw)
+    except TypeError:
+        return []
+    return [item for item in items if isinstance(item, Mapping)]
+
+
+@dataclass(frozen=True)
+class FootnoteOwnership:
+    """각주 번호가 어느 정책 것인지, 그 정책을 문장에서 어떻게 알아보는지.
+
+    owner_of  각주 번호 → ``policy_id``
+    title_of  ``policy_id`` → 정책 제목 (데이터 값 그대로)
+
+    둘 다 비어 있을 수 있다. 그때 ``mismatched_footnotes`` 는 항상 빈 튜플이라 검사가
+    아무 문장도 지우지 않는다. 각주나 정책을 못 받았다고 답변을 비우지 않는다.
+    """
+
+    owner_of: Mapping[int, str]
+    title_of: Mapping[str, str]
+
+    def mentioned_policies(self, sentence: str) -> Tuple[str, ...]:
+        """문장이 제목으로 언급한 정책 id. 제목이 안 나오면 빈 튜플(= 판정 대상 아님)."""
+        packed = _pack(sentence)
+        if not packed:
+            return ()
+        found: List[str] = []
+        for policy_id, title in self.title_of.items():
+            key = _pack(title)
+            if len(key) < _MIN_TITLE_LEN or key not in packed:
+                continue
+            if policy_id not in found:
+                found.append(policy_id)
+        return tuple(found)
+
+    def mismatched_footnotes(self, sentence: str) -> Tuple[int, ...]:
+        """문장이 말한 정책과 소유 정책이 다른 각주 번호들."""
+        mentioned = set(self.mentioned_policies(sentence))
+        if not mentioned:
+            return ()
+        wrong: List[int] = []
+        for number in footnote_numbers(sentence):
+            owner = self.owner_of.get(number, "")
+            if owner and owner not in mentioned and number not in wrong:
+                wrong.append(number)
+        return tuple(wrong)
+
+    def describe(self, numbers: Sequence[int]) -> str:
+        """지표·기록용 설명. "[8]→GOV-007" 꼴."""
+        return ", ".join(f"[{n}]→{self.owner_of.get(n, '')}" for n in numbers)
+
+
+def footnote_owners(footnotes: Any = None, policies: Any = ()) -> FootnoteOwnership:
+    """각주 번호의 소유 정책과 정책 제목을 모은다.
+
+    ``footnotes`` 항목의 ``policy_id`` 를 정본으로 쓰고, 그 값이 없는 번호만 정책
+    ``conditions[].footnote_id`` 로 채운다. 근거는 이 절 머리말에 있다.
+
+    **번호를 새로 부여하지 않는다.** 서버가 매긴 값을 읽기만 한다(README 6장 근거 규칙).
+    """
+    title_of: Dict[str, str] = {}
+    for policy in _mapping_rows(policies, ("policies", "items", "data")):
+        policy_id = str(policy.get("policy_id") or policy.get("policyId") or "").strip()
+        title = str(policy.get("title") or "").strip()
+        if policy_id and title and policy_id not in title_of:
+            title_of[policy_id] = title
+
+    owner_of: Dict[int, str] = {}
+    for row in _mapping_rows(footnotes, ("footnotes", "items", "data")):
+        number = _as_int(row.get("footnote_id", row.get("id")))
+        owner = str(row.get("policy_id") or row.get("policyId") or "").strip()
+        if number is not None and owner:
+            owner_of.setdefault(number, owner)
+
+    # 빈 자리만 채운다. 이미 각주 목록이 말한 소유는 덮지 않는다.
+    for policy in _mapping_rows(policies, ("policies", "items", "data")):
+        policy_id = str(policy.get("policy_id") or policy.get("policyId") or "").strip()
+        if not policy_id:
+            continue
+        for condition in _mapping_rows(policy.get("conditions")):
+            number = _as_int(condition.get("footnote_id"))
+            if number is not None:
+                owner_of.setdefault(number, policy_id)
+
+    return FootnoteOwnership(owner_of=owner_of, title_of=title_of)
+
+
+# ---------------------------------------------------------------------------
 # 3. 문장 분리와 근거 필요 판별 (README 6장 "근거 규칙")
 # ---------------------------------------------------------------------------
 
@@ -416,6 +582,8 @@ TOO_LONG = "too_long"
 BANNED = "banned_phrase"
 MISSING_FOOTNOTE = "missing_footnote"
 UNKNOWN_FOOTNOTE = "unknown_footnote"
+#: 번호는 존재하는데 **다른 정책** 각주인 경우. 2-1 절 참고.
+MISMATCHED_FOOTNOTE = "mismatched_footnote"
 NO_CLOSING_LINE = "no_closing_line"
 
 
@@ -446,6 +614,7 @@ class AnswerCheck:
     banned_hits          금지 표현이 걸린 횟수 (지표: 금지 표현 0건)
     used_footnotes       본문이 쓴 각주 번호
     unknown_footnotes    각주 목록에 없는데 본문이 쓴 번호
+    mismatched_footnotes 문장이 말한 정책과 소유 정책이 다른 번호 (지표: 각주 일치율)
     """
 
     ok: bool
@@ -457,6 +626,7 @@ class AnswerCheck:
     banned_hits: int = 0
     used_footnotes: Tuple[int, ...] = ()
     unknown_footnotes: Tuple[int, ...] = ()
+    mismatched_footnotes: Tuple[int, ...] = ()
 
     def codes(self) -> Tuple[str, ...]:
         """걸린 문제 코드만. 지표 집계용."""
@@ -466,6 +636,7 @@ class AnswerCheck:
 def validate(
     answer_text: str,
     footnotes: Any = None,
+    policies: Any = (),
     *,
     max_len: int = MAX_ANSWER_LEN,
 ) -> AnswerCheck:
@@ -474,15 +645,22 @@ def validate(
     ``footnotes`` 는 실제 존재하는 각주 목록이다(docs/03-api-contract.md 5장). 번호 집합만
     넘겨도 동작한다. ``known_footnote_ids`` 를 보라.
 
+    ``policies`` 는 정책 판정 결과 목록(4장)이다. **정책 제목을 읽기 위해 받는다.** 문장이
+    어느 정책을 말하는지는 제목이 문장에 나오는지로 보고(2-1 절), 그 판단 없이는 각주가
+    다른 정책 것인지 알 수 없다. 넘기지 않으면 ``mismatched_footnote`` 검사만 쉬고 나머지는
+    그대로 돈다.
+
     문제 코드
-        too_long          600자 초과
-        banned_phrase     금지 표현
-        missing_footnote  각주가 필요한 문장에 각주가 없음
-        unknown_footnote  본문이 쓴 번호가 각주 목록에 없음
-        no_closing_line   고정 문구 없음
+        too_long             600자 초과
+        banned_phrase        금지 표현
+        missing_footnote     각주가 필요한 문장에 각주가 없음
+        unknown_footnote     본문이 쓴 번호가 각주 목록에 없음
+        mismatched_footnote  문장이 말한 정책과 각주 소유 정책이 다름
+        no_closing_line      고정 문구 없음
     """
     text = answer_text or ""
     known = known_footnote_ids(footnotes)
+    ownership = footnote_owners(footnotes, policies)
     sentences = split_sentences(text)
     used = footnote_numbers(text)
 
@@ -490,6 +668,7 @@ def validate(
     evidence_count = 0
     cited_count = 0
     banned_hits = 0
+    mismatched_all: List[int] = []
 
     if len(text) > max_len:
         problems.append(
@@ -512,13 +691,25 @@ def validate(
                 )
             )
 
+        mismatched = ownership.mismatched_footnotes(sentence)
+        if mismatched:
+            mismatched_all.extend(n for n in mismatched if n not in mismatched_all)
+            problems.append(
+                Problem(MISMATCHED_FOOTNOTE, sentence, ownership.describe(mismatched))
+            )
+
         if needs_footnote(sentence):
             evidence_count += 1
             # 존재하지 않는 번호는 근거로 세지 않는다. 화면에서 연결되지 않기 때문이다.
-            valid = [n for n in numbers if n in known]
+            # 다른 정책 각주도 세지 않는다. 눌러 보면 다른 제도 발췌가 뜨므로 이 문장의
+            # 근거가 아니다.
+            valid = [n for n in numbers if n in known and n not in mismatched]
             if valid:
                 cited_count += 1
-            else:
+            elif not mismatched:
+                # 각주를 잘못 붙인 문장에 "각주 없음"을 겹쳐 세지 않는다. 한 문장의 한 가지
+                # 잘못을 두 번 기록하면 지표에서 건수가 부풀고, 어느 쪽을 고쳐야 하는지
+                # 흐려진다. 둘 다 sanitize 에서 문장이 빠지는 결과는 같다.
                 problems.append(
                     Problem(
                         MISSING_FOOTNOTE,
@@ -540,6 +731,7 @@ def validate(
         banned_hits=banned_hits,
         used_footnotes=used,
         unknown_footnotes=tuple(n for n in used if n not in known),
+        mismatched_footnotes=tuple(mismatched_all),
     )
 
 
@@ -587,7 +779,7 @@ class SanitizeResult:
     truncated: bool = False
 
 
-def sanitize(answer_text: str, footnotes: Any = None) -> SanitizeResult:
+def sanitize(answer_text: str, footnotes: Any = None, policies: Any = ()) -> SanitizeResult:
     """고칠 수 있는 문제는 고치고, 못 고치는 문장은 뺀다.
 
     검증 실패를 그냥 버리면 사용자에게 설명이 아예 나가지 않는다. 카드는 이미 화면에
@@ -596,21 +788,31 @@ def sanitize(answer_text: str, footnotes: Any = None) -> SanitizeResult:
 
     순서
         1. 존재하지 않는 각주를 참조하는 문장 제거
-        2. 금지 표현 처리 (수식어는 삭제, 단정은 문장 제거)
-        3. 각주 없는 판정 문장 제거
-        4. 고정 문구 보장
-        5. 600자로 줄이기
+        2. 다른 정책의 각주를 붙인 문장 제거
+        3. 금지 표현 처리 (수식어는 삭제, 단정은 문장 제거)
+        4. 각주 없는 판정 문장 제거
+        5. 고정 문구 보장
+        6. 600자로 줄이기
 
     1번에서 번호만 지우지 않고 문장을 버리는 이유
         번호만 지우면 근거 없는 판정 문장이 남는다. 그건 P0 위반이고(README 6장, 11장),
         각주가 빠진 원인은 애초에 인용 검증 실패라 그 문장의 판정 자체를 더 이상 믿을 수
         없다(docs/03-api-contract.md 4-3). 문장을 지우는 쪽이 정직하다.
 
-    3번도 같은 이유로 문장을 버린다. 코드가 각주를 새로 붙일 수는 없다. 각주는 규칙 엔진과
+    2번도 번호만 바꾸지 않는다. 코드가 올바른 번호를 **고를** 수 있으려면 그 문장이 어느
+    조건을 말하는지 알아야 하는데, 그건 판정을 다시 하는 일이다(README 6장: 답변에서 상태를
+    새로 판단하지 않는다). 그 정책 번호 중 하나를 아무거나 끼우면 각주는 연결되지만 문장과
+    발췌가 여전히 다른 내용을 말한다. 틀린 근거를 그럴듯하게 만드는 쪽이라 더 나쁘다.
+
+    4번도 같은 이유로 문장을 버린다. 코드가 각주를 새로 붙일 수는 없다. 각주는 규칙 엔진과
     AI B 가 넘긴 발췌에만 연결하고, 새 발췌를 만들지 않는다(README 6장 근거 규칙).
+
+    ``policies`` 는 정책 제목을 읽는 데만 쓴다. 넘기지 않으면 2번이 쉰다(``validate`` 와
+    같은 입력을 받아야 "정리 결과는 검증을 통과한다"는 계약이 지켜진다).
     """
     original = answer_text or ""
     known = known_footnote_ids(footnotes)
+    ownership = footnote_owners(footnotes, policies)
     removals: List[Removal] = []
 
     kept: List[str] = []
@@ -627,7 +829,15 @@ def sanitize(answer_text: str, footnotes: Any = None) -> SanitizeResult:
             )
             continue
 
-        # 2. 금지 표현
+        # 2. 다른 정책의 각주를 붙인 문장
+        mismatched = ownership.mismatched_footnotes(sentence)
+        if mismatched:
+            removals.append(
+                Removal(MISMATCHED_FOOTNOTE, sentence, ownership.describe(mismatched))
+            )
+            continue
+
+        # 3. 금지 표현
         current = sentence
         dropped = False
         for banned in find_banned(current):
@@ -647,7 +857,7 @@ def sanitize(answer_text: str, footnotes: Any = None) -> SanitizeResult:
             removals.append(Removal(BANNED, sentence, "정리 후에도 남음"))
             continue
 
-        # 3. 각주 없는 판정 문장
+        # 4. 각주 없는 판정 문장
         if needs_footnote(current) and not any(
             n in known for n in footnote_numbers(current)
         ):
@@ -662,13 +872,13 @@ def sanitize(answer_text: str, footnotes: Any = None) -> SanitizeResult:
 
         kept.append(current)
 
-    # 4. 고정 문구
+    # 5. 고정 문구
     closing_added = False
     if not any(has_closing_line(sentence) for sentence in kept):
         kept.append(CLOSING_LINE + ".")
         closing_added = True
 
-    # 5. 길이 줄이기
+    # 6. 길이 줄이기
     kept, truncated, length_removals = _trim(kept, MAX_ANSWER_LEN)
     removals.extend(length_removals)
 

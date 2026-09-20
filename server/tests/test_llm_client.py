@@ -8,14 +8,22 @@ import asyncio
 
 import pytest
 
+from ai.conversation import fields, interpret
 from ai.conversation import llm as conversation_llm
+from ai.conversation import prompts
 from server.llm_client import (
+    DEFAULT_STRUCTURED_TIMEOUT_S,
     GatewayLLMClient,
     LLMOutputError,
     extract_json_object,
     missing_settings,
 )
-from server.orchestrator import LLMTask, StructuredLLMRequest, TextLLMRequest
+from server.orchestrator import (
+    LLMTask,
+    OrchestratorTimeouts,
+    StructuredLLMRequest,
+    TextLLMRequest,
+)
 
 
 class FakeGateway:
@@ -38,6 +46,15 @@ class FailingGateway:
 def structured_request() -> StructuredLLMRequest:
     return StructuredLLMRequest(
         task=LLMTask.INTERPRET_MESSAGE,
+        input={"message": "휴학했어요"},
+        output_schema={"type": "object"},
+    )
+
+
+def other_structured_request() -> StructuredLLMRequest:
+    """해석이 아닌 구조화 작업. 기존 스키마 경로를 그대로 써야 한다."""
+    return StructuredLLMRequest(
+        task=LLMTask.COMPOSE_ANSWER,
         input={"message": "휴학했어요"},
         output_schema={"type": "object"},
     )
@@ -116,10 +133,11 @@ def test_complete_json_returns_parsed_output() -> None:
 
 
 def test_complete_json_sends_the_schema_and_a_zero_temperature() -> None:
+    """해석이 아닌 작업은 스키마를 싣는 기존 경로다."""
     gateway = FakeGateway()
     client = GatewayLLMClient(gateway)
 
-    asyncio.run(client.complete_json(structured_request()))
+    asyncio.run(client.complete_json(other_structured_request()))
 
     call = gateway.calls[0]
     assert "object" in str(call["system"])
@@ -127,13 +145,103 @@ def test_complete_json_sends_the_schema_and_a_zero_temperature() -> None:
     assert call["temperature"] == conversation_llm.TEMPERATURE_STRUCTURED
 
 
+def test_interpretation_sends_the_allowed_value_table() -> None:
+    """허용값 표가 프롬프트에 없으면 모델이 표 밖 값을 내고 `interpret` 이 조용히 버린다.
+
+    증상은 "말했는데 프로필이 안 바뀐다" 하나뿐이라, 프롬프트에 표가 실렸는지 여기서 고정한다.
+    """
+    gateway = FakeGateway()
+    request = StructuredLLMRequest(
+        task=LLMTask.INTERPRET_MESSAGE,
+        input={"message": "자취해요", "profile": {"status": "enrolled"}},
+        output_schema={"type": "object"},
+    )
+
+    asyncio.run(GatewayLLMClient(gateway).complete_json(request))
+
+    call = gateway.calls[0]
+    assert call["system"] == prompts.INTERPRET_SYSTEM
+    user = str(call["user"])
+    assert "자취해요" in user
+    assert "status: enrolled" in user
+    # 항목별 허용값과 시점 구분, region 금지가 모두 실려야 한다.
+    for value in sorted(interpret.EXTRA_FIELD_VALUES[fields.HOUSING_TYPE]):
+        assert value in user
+    assert "planned" in user
+    assert "region" in user
+
+
+def test_interpretation_prompt_is_built_by_the_prompt_module() -> None:
+    """문안을 두 곳에서 만들면 한쪽만 낡는다. 조립은 `prompts` 가 한다."""
+    gateway = FakeGateway()
+    request = StructuredLLMRequest(
+        task=LLMTask.INTERPRET_MESSAGE,
+        input={"message": "관악구로 이사했어요", "profile": {"district": "마포구"}},
+        output_schema={"type": "object"},
+    )
+
+    asyncio.run(GatewayLLMClient(gateway).complete_json(request))
+
+    assert gateway.calls[0]["user"] == prompts.build_interpret_prompt(
+        "관악구로 이사했어요", {"district": "마포구"}
+    )
+
+
+def test_other_tasks_keep_the_schema_prompt() -> None:
+    """해석만 바꾼다. 작업별 문안이 있는 것은 해석뿐이다."""
+    gateway = FakeGateway()
+
+    asyncio.run(GatewayLLMClient(gateway).complete_json(other_structured_request()))
+
+    system = str(gateway.calls[0]["system"])
+    assert prompts.INTERPRET_SYSTEM not in system
+    assert LLMTask.COMPOSE_ANSWER.value in system
+
+
+def test_interpretation_without_a_message_falls_back_to_the_schema_prompt(caplog) -> None:
+    """빈 프롬프트를 보내면 모델이 문장 없이 값을 짜낸다. 지금보다 나쁘다."""
+    gateway = FakeGateway()
+    request = StructuredLLMRequest(
+        task=LLMTask.INTERPRET_MESSAGE,
+        input={"profile": {"status": "enrolled"}},
+        output_schema={"type": "object"},
+    )
+
+    with caplog.at_level("WARNING", logger="server.llm_client"):
+        asyncio.run(GatewayLLMClient(gateway).complete_json(request))
+
+    system = str(gateway.calls[0]["system"])
+    assert prompts.INTERPRET_SYSTEM not in system
+    assert LLMTask.INTERPRET_MESSAGE.value in system
+    assert any("메시지 없음" in record.getMessage() for record in caplog.records)
+
+
+def test_interpretation_with_a_blank_message_falls_back() -> None:
+    gateway = FakeGateway()
+    request = StructuredLLMRequest(
+        task=LLMTask.INTERPRET_MESSAGE,
+        input={"message": "   "},
+        output_schema={"type": "object"},
+    )
+
+    asyncio.run(GatewayLLMClient(gateway).complete_json(request))
+
+    assert prompts.INTERPRET_SYSTEM not in str(gateway.calls[0]["system"])
+
+
 def test_structured_timeout_stays_under_the_orchestrator_limit() -> None:
-    """오케스트레이터가 3초에 끊는다. 더 길게 잡으면 부분 결과까지 버려진다."""
+    """오케스트레이터가 먼저 끊으면 원인 없이 기본값만 남는다. 우리 쪽이 먼저 터져야 한다.
+
+    실측 해석 응답이 1.5~6.3초라 예전 2.5초는 긴 문장에서 매번 끊겼다. 올릴 수 있는 한계는
+    `OrchestratorTimeouts.interpretation_s` 다. 그 값을 여기서 다시 적지 않는다.
+    """
     gateway = FakeGateway()
 
     asyncio.run(GatewayLLMClient(gateway).complete_json(structured_request()))
 
-    assert float(gateway.calls[0]["timeout"]) < 3.0
+    timeout = float(gateway.calls[0]["timeout"])
+    assert timeout == DEFAULT_STRUCTURED_TIMEOUT_S
+    assert 2.5 < timeout < OrchestratorTimeouts().interpretation_s
 
 
 def test_complete_json_propagates_failures_for_the_caller_to_absorb() -> None:

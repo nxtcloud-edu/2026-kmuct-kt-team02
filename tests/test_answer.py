@@ -26,6 +26,7 @@ from ai.conversation.answer import (
     DATA_SCOPE_LINE,
     LIKELY,
     MAX_ANSWER_LEN,
+    MISMATCHED_FOOTNOTE,
     MISSING_FOOTNOTE,
     NO_CLOSING_LINE,
     NO_RESULT_LINE,
@@ -36,6 +37,7 @@ from ai.conversation.answer import (
     build_skeleton,
     find_banned,
     footnote_numbers,
+    footnote_owners,
     has_footnote,
     known_footnote_ids,
     needs_footnote,
@@ -50,18 +52,32 @@ FOOTNOTES = (
     {"footnote_id": 2, "policy_id": "SEOUL-002", "excerpt": "휴학생은 제외합니다"},
 )
 
+# 각주 소유 검사에 쓰는 정책 목록 (docs/03-api-contract.md 4장). ``FOOTNOTES`` 의
+# ``policy_id`` 와 짝이 맞아야 번호가 어느 정책 것인지 나온다.
+POLICIES = (
+    {"policy_id": "SEOUL-001", "title": "청년월세지원", "status": LIKELY},
+    {"policy_id": "SEOUL-002", "title": "희망두배청년통장", "status": CHECK},
+)
+
 SUMMARY = "신청 가능성이 높은 제도 2개, 확인이 필요한 제도 1개를 찾았어요."
 CLOSING = CLOSING_LINE + "."
 
 
-def codes(text, footnotes=FOOTNOTES):
-    """``validate`` 가 낸 문제 코드 목록. 반복되는 두 줄을 줄인다."""
-    return validate(text, footnotes).codes()
+def codes(text, footnotes=FOOTNOTES, policies=()):
+    """``validate`` 가 낸 문제 코드 목록. 반복되는 두 줄을 줄인다.
+
+    ``policies`` 는 기본으로 비운다. 각주 소유 검사(2-1 절)는 정책 제목이 있어야 돌고,
+    그 검사를 보는 반은 ``POLICIES`` 를 명시해서 넘긴다. 기본값으로 켜 두면 이 함수를 쓰는
+    다른 반이 무엇을 검사하는지가 흐려진다.
+    """
+    return validate(text, footnotes, policies).codes()
 
 
-def details_for(text, code, footnotes=FOOTNOTES):
+def details_for(text, code, footnotes=FOOTNOTES, policies=()):
     """특정 코드로 걸린 문제들의 detail 목록."""
-    return [p.detail for p in validate(text, footnotes).problems if p.code == code]
+    return [
+        p.detail for p in validate(text, footnotes, policies).problems if p.code == code
+    ]
 
 
 def policy(**overrides):
@@ -735,6 +751,244 @@ class TestBuildSkeletonTolerance(unittest.TestCase):
         skeleton = build_skeleton([policy(status=UNLIKELY)])
         self.assertEqual((skeleton.likely_count, skeleton.check_count), (0, 0))
         self.assertEqual(skeleton.summary, NO_RESULT_LINE + ".")
+
+
+class TestMismatchedFootnote(unittest.TestCase):
+    """문장이 말한 정책과 각주 소유 정책이 다른 경우 (answer.py 2-1 절).
+
+    ``unknown_footnote`` 는 번호가 **있는지**만 본다. 그래서 정책 A 문장에 정책 B 번호를
+    붙이면 통과하고, 심사위원이 각주를 누르면 다른 제도의 발췌가 뜬다. 실측 일치율이
+    2/7 이었던 실패가 이것이다. 근거가 있는 것처럼 보이면서 근거가 아니라 더 위험하다.
+    """
+
+    # (설명, 문장). 정책 A 를 말하면서 정책 B 각주를 붙였다.
+    WRONG = (
+        ("A 문장에 B 각주", "청년월세지원은 소득 조건이 있어요[2]."),
+        ("B 문장에 A 각주", "희망두배청년통장은 월 20만원을 지원해요[1]."),
+        ("제목을 띄어 쓴 문장", "청년 월세 지원은 만 19~39세 조건이 있어요[2]."),
+        ("맞는 번호와 틀린 번호를 같이 붙인 문장", "청년월세지원은 조건이 있어요[1][2]."),
+    )
+
+    # (설명, 문장). 제목과 각주 소유가 맞는다.
+    RIGHT = (
+        ("A 문장에 A 각주", "청년월세지원은 월 20만원을 지원해요[1]."),
+        ("B 문장에 B 각주", "희망두배청년통장은 휴학생을 제외해요[2]."),
+        ("두 제도를 함께 말한 문장", "청년월세지원과 희망두배청년통장은 조건이 달라요[1][2]."),
+    )
+
+    def test_다른_정책_각주를_붙인_문장을_잡는다(self):
+        for label, sentence in self.WRONG:
+            with self.subTest(case=label):
+                check = validate(f"{sentence} {CLOSING}", FOOTNOTES, POLICIES)
+                self.assertIn(
+                    MISMATCHED_FOOTNOTE,
+                    check.codes(),
+                    f"{label}: 다른 정책 각주가 통과했다",
+                )
+
+    def test_어느_번호가_어느_정책_것인지_기록한다(self):
+        """지표와 로그에서 고칠 자리를 찾을 수 있어야 한다."""
+        details = details_for(
+            f"청년월세지원은 소득 조건이 있어요[2]. {CLOSING}",
+            MISMATCHED_FOOTNOTE,
+            FOOTNOTES,
+            POLICIES,
+        )
+        self.assertTrue(details, "기록이 비었다")
+        self.assertIn("[2]", details[0])
+        self.assertIn("SEOUL-002", details[0], details[0])
+
+    def test_맞는_각주를_붙인_문장은_잡지_않는다(self):
+        for label, sentence in self.RIGHT:
+            with self.subTest(case=label):
+                check = validate(f"{sentence} {CLOSING}", FOOTNOTES, POLICIES)
+                self.assertTrue(check.ok, f"{label}: 정상 문장이 걸렸다 -> {check.problems}")
+
+    def test_제목이_안_나오는_문장은_판정하지_않는다(self):
+        """요약·마감·안내 문장까지 지우면 답변이 고정 문구 한 줄로 줄어든다.
+
+        그건 ``empty_after_sanitize`` 와 같은 실패고, 고치려던 문제보다 크다.
+        """
+        cases = (
+            ("요약", SUMMARY),
+            ("고정 문구", CLOSING),
+            ("마감 문장", "마감이 가까운 제도가 있어요[2]."),
+            ("조건 안내", "소득 구간을 알려주시면 더 찾아볼게요."),
+            ("제목 없는 판정 문장", "휴학생은 제외돼요[1]."),
+        )
+        for label, sentence in cases:
+            with self.subTest(case=label):
+                check = validate(f"{sentence} {CLOSING}", FOOTNOTES, POLICIES)
+                self.assertNotIn(
+                    MISMATCHED_FOOTNOTE, check.codes(), f"{label}: 판정 대상이 아닌 문장을 잡았다"
+                )
+
+    def test_잘못_붙은_각주를_근거로_세지_않는다(self):
+        """번호가 붙어 있어도 다른 제도 발췌로 이어지면 이 문장의 근거가 아니다."""
+        check = validate(
+            f"청년월세지원은 소득 조건이 있어요[2]. {CLOSING}", FOOTNOTES, POLICIES
+        )
+        self.assertEqual(check.evidence_sentences, 1)
+        self.assertEqual(check.cited_sentences, 0, "틀린 각주를 근거로 셌다")
+        self.assertEqual(check.mismatched_footnotes, (2,))
+
+    def test_한_문장을_두_코드로_겹쳐_세지_않는다(self):
+        """각주를 잘못 붙인 것과 안 붙인 것은 다른 잘못이다. 건수가 부풀면 어디를 고칠지 흐려진다."""
+        codes_found = codes(
+            f"청년월세지원은 소득 조건이 있어요[2]. {CLOSING}", FOOTNOTES, POLICIES
+        )
+        self.assertIn(MISMATCHED_FOOTNOTE, codes_found, codes_found)
+        self.assertNotIn(MISSING_FOOTNOTE, codes_found, codes_found)
+
+    def test_정책_목록을_안_넘기면_검사만_쉰다(self):
+        """제목을 모르면 문장이 어느 정책을 말하는지 알 수 없다. 그때 문장을 지우지 않는다."""
+        text = f"청년월세지원은 소득 조건이 있어요[2]. {CLOSING}"
+        self.assertNotIn(MISMATCHED_FOOTNOTE, validate(text, FOOTNOTES).codes())
+        self.assertIn("청년월세지원", sanitize(text, FOOTNOTES).text)
+
+    def test_깨진_입력에도_예외가_없다(self):
+        """각주나 정책 모양이 이상해서 답변 단계가 통째로 실패하면 손해가 더 크다."""
+        broken = (
+            ("각주 None", None, POLICIES),
+            ("각주 번호 집합", {1, 2}, POLICIES),
+            ("각주가 문자열", "각주", POLICIES),
+            ("정책 None", FOOTNOTES, None),
+            ("정책이 문자열", FOOTNOTES, "정책 목록"),
+            ("정책이 숫자", FOOTNOTES, 5),
+            ("정책에 None 섞임", FOOTNOTES, [None, POLICIES[0]]),
+            ("정책 dict 하나", FOOTNOTES, POLICIES[0]),
+            ("정책 값이 전부 None", FOOTNOTES, [{"policy_id": None, "title": None}]),
+            ("각주와 정책 둘 다 없음", None, ()),
+        )
+        text = f"{SUMMARY} 청년월세지원은 월 20만원을 지원해요[1]. {CLOSING}"
+        for label, footnotes, policies in broken:
+            with self.subTest(case=label):
+                check = validate(text, footnotes, policies)
+                result = sanitize(text, footnotes, policies)
+                self.assertIsInstance(check.codes(), tuple, label)
+                self.assertIn(CLOSING_LINE, result.text, label)
+
+
+class TestMismatchedFootnoteSanitize(unittest.TestCase):
+    """정리 단계가 그 문장을 빼는지, 나머지를 남기는지."""
+
+    WRONG_SENTENCE = "청년월세지원은 소득 조건이 있어요[2]."
+    RIGHT_SENTENCE = "청년월세지원은 월 20만원을 지원해요[1]."
+
+    def test_다른_정책_각주를_붙인_문장은_문장째_빠진다(self):
+        """번호만 바꿔 살리려면 그 문장이 어느 조건을 말하는지 다시 판단해야 한다.
+
+        그건 답변 단계가 하지 않기로 한 일이고(README 6장), 아무 번호나 끼우면 틀린 근거가
+        그럴듯해진다.
+        """
+        text = f"{SUMMARY} {self.WRONG_SENTENCE} {self.RIGHT_SENTENCE} {CLOSING}"
+        result = sanitize(text, FOOTNOTES, POLICIES)
+        self.assertNotIn("소득 조건이 있어요", result.text, "잘못 붙은 각주 문장이 남았다")
+        self.assertIn(
+            MISMATCHED_FOOTNOTE,
+            [removal.code for removal in result.removals],
+            f"왜 빠졌는지 기록이 없다: {result.removals}",
+        )
+
+    def test_맞는_각주를_붙인_문장은_남는다(self):
+        """틀린 문장 하나 때문에 맞는 설명까지 사라지면 답변이 비어 버린다."""
+        text = f"{SUMMARY} {self.WRONG_SENTENCE} {self.RIGHT_SENTENCE} {CLOSING}"
+        result = sanitize(text, FOOTNOTES, POLICIES)
+        self.assertIn("월 20만원을 지원해요[1]", result.text)
+        self.assertIn(SUMMARY, result.text)
+
+    def test_제목이_안_나오는_문장은_남는다(self):
+        for label, sentence in (
+            ("요약", SUMMARY),
+            ("마감 문장", "마감이 가까운 제도가 있어요[2]."),
+            ("안내 문장", BROADEN_LINE + "."),
+        ):
+            with self.subTest(case=label):
+                result = sanitize(f"{sentence} {CLOSING}", FOOTNOTES, POLICIES)
+                self.assertIn(
+                    sentence.rstrip("."), result.text, f"{label}: 판정 대상이 아닌 문장이 빠졌다"
+                )
+
+    def test_정리한_결과는_검증을_통과한다(self):
+        """``sanitize`` 가 약속한 계약이다. 새 검사를 넣어도 지켜져야 한다."""
+        cases = (
+            ("틀린 각주 하나", f"{SUMMARY} {self.WRONG_SENTENCE} {CLOSING}"),
+            (
+                "틀린 각주와 맞는 각주가 섞인 답변",
+                f"{SUMMARY} {self.WRONG_SENTENCE} {self.RIGHT_SENTENCE} {CLOSING}",
+            ),
+            (
+                "틀린 각주와 금지 표현이 겹친 답변",
+                f"{SUMMARY} 청년월세지원은 확실히 지원 대상이에요[2]. {CLOSING}",
+            ),
+            (
+                "두 정책이 서로 번호를 바꿔 쓴 답변",
+                f"{SUMMARY} 청년월세지원은 조건이 있어요[2]. "
+                f"희망두배청년통장은 월 20만원을 지원해요[1]. {CLOSING}",
+            ),
+        )
+        for label, text in cases:
+            with self.subTest(case=label):
+                result = sanitize(text, FOOTNOTES, POLICIES)
+                check = validate(result.text, FOOTNOTES, POLICIES)
+                self.assertTrue(check.ok, f"{label}: 정리 후에도 남았다 -> {check.problems}")
+
+
+class TestFootnoteOwners(unittest.TestCase):
+    """번호→정책 대응을 어디서 읽는지 (answer.py 2-1 절).
+
+    ``footnotes`` 의 ``policy_id`` 를 정본으로 쓴다. 화면이 각주를 그리는 목록이고,
+    인용 검증을 통과한 뒤의 상태이기 때문이다 (docs/03-api-contract.md 5-1, 4-3).
+    정책 ``conditions[].footnote_id`` 는 빈 자리를 채울 때만 쓴다.
+    """
+
+    def test_각주_목록의_policy_id를_읽는다(self):
+        owners = footnote_owners(FOOTNOTES, POLICIES)
+        self.assertEqual(owners.owner_of[1], "SEOUL-001")
+        self.assertEqual(owners.owner_of[2], "SEOUL-002")
+        self.assertEqual(owners.title_of["SEOUL-001"], "청년월세지원")
+
+    def test_각주_목록이_없으면_정책_조건에서_채운다(self):
+        """서버가 각주 목록을 따로 넘기지 않는 경로에서도 소유를 알 수 있어야 한다."""
+        policies = [
+            {"policy_id": "A", "title": "가제도", "conditions": [{"footnote_id": 4}]},
+            {"policy_id": "B", "title": "나제도", "conditions": [{"footnote_id": 5}]},
+        ]
+        owners = footnote_owners(None, policies)
+        self.assertEqual((owners.owner_of.get(4), owners.owner_of.get(5)), ("A", "B"))
+
+    def test_두_목록이_다르면_각주_목록을_따른다(self):
+        """존재 여부는 각주 목록으로 보는데 소유를 다른 목록으로 보면 두 검사가 엇갈린다."""
+        owners = footnote_owners(
+            [{"footnote_id": 1, "policy_id": "SEOUL-002"}],
+            [{"policy_id": "SEOUL-001", "title": "청년월세지원", "conditions": [{"footnote_id": 1}]}],
+        )
+        self.assertEqual(owners.owner_of[1], "SEOUL-002")
+
+    def test_감싼_이벤트_본문도_받는다(self):
+        """서버가 ``footnotes`` 이벤트 본문을 그대로 넘기는 것이 가장 자연스러운 호출이다."""
+        owners = footnote_owners({"footnotes": list(FOOTNOTES)}, {"policies": list(POLICIES)})
+        self.assertEqual(owners.owner_of[2], "SEOUL-002")
+        self.assertEqual(owners.title_of["SEOUL-002"], "희망두배청년통장")
+
+    def test_소유를_모르는_번호는_판정하지_않는다(self):
+        """모르는 값으로 문장을 지우지 않는다."""
+        owners = footnote_owners([{"footnote_id": 9}], POLICIES)
+        self.assertEqual(owners.mismatched_footnotes("청년월세지원은 조건이 있어요[9]."), ())
+
+    def test_제목이_짧으면_대조에_쓰지_않는다(self):
+        """두 글자 제목은 다른 낱말 안에 우연히 들어간다. 언급하지 않은 정책을 언급으로 본다."""
+        owners = footnote_owners(
+            [{"footnote_id": 1, "policy_id": "A"}], [{"policy_id": "A", "title": "청년"}]
+        )
+        self.assertEqual(owners.mentioned_policies("청년월세지원은 조건이 있어요[1]."), ())
+
+    def test_각주가_하나도_없어도_예외가_없다(self):
+        for label, footnotes in (("None", None), ("빈 목록", []), ("빈 dict", {})):
+            with self.subTest(case=label):
+                owners = footnote_owners(footnotes, POLICIES)
+                self.assertEqual(owners.owner_of, {}, label)
+                self.assertEqual(owners.mismatched_footnotes("청년월세지원은 조건이 있어요[1]."), ())
 
 
 if __name__ == "__main__":

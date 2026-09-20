@@ -888,9 +888,23 @@ class TestFinishTurnDrops(unittest.TestCase):
     """
 
     def test_버리는_문제는_금지_표현과_각주_문제뿐이다(self):
+        """각주 문제 셋을 모두 담는다.
+
+        ``mismatched_footnote`` 는 번호가 존재하는데 **다른 정책** 각주인 경우다. 사용자는
+        근거가 있다고 읽고 각주를 눌러 다른 제도의 발췌를 본다. ``unknown_footnote`` 는
+        연결되지 않는 번호라 "근거를 못 찾았다"로 읽히는데 이쪽은 틀린 근거가 맞는 근거처럼
+        보인다. 근거 없는 단정과 같은 급이라 같은 자리에 둔다.
+        """
         self.assertEqual(
             pipeline.BLOCKING_PROBLEM_CODES,
-            frozenset({answer.BANNED, answer.MISSING_FOOTNOTE, answer.UNKNOWN_FOOTNOTE}),
+            frozenset(
+                {
+                    answer.BANNED,
+                    answer.MISSING_FOOTNOTE,
+                    answer.UNKNOWN_FOOTNOTE,
+                    answer.MISMATCHED_FOOTNOTE,
+                }
+            ),
             "버리는 문제 목록이 바뀌었다",
         )
 

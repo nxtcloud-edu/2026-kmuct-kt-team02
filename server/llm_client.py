@@ -44,18 +44,79 @@ from collections.abc import AsyncIterator, Mapping
 
 from ai import gateway
 from ai.conversation import llm as conversation_llm
-from server.orchestrator import StructuredLLMRequest, TextLLMRequest
+from ai.conversation import prompts
+from server.orchestrator import LLMTask, StructuredLLMRequest, TextLLMRequest
 
 _LOGGER = logging.getLogger(__name__)
 
 #: 구조화 호출과 답변 호출에 주는 시간. 오케스트레이터 제한보다 짧게 잡는다.
 #: (`OrchestratorTimeouts.interpretation_s` 3초, `answer_s` 15초)
-DEFAULT_STRUCTURED_TIMEOUT_S = 2.5
+#:
+#: 2.5 → 2.9. 실측 해석 응답이 1.5~6.3초라 2.5초는 긴 문장에서 매번 끊겼다. SDK 재시도를
+#: 껐으므로(`build_gateway_client`) 이 값이 곧 실제 상한이다. **올릴 수 있는 한계는
+#: `OrchestratorTimeouts.interpretation_s`(3.0) 다.** 그보다 크게 잡으면 오케스트레이터가
+#: 먼저 끊어 결과를 버리고, 취소되지 않는 `asyncio.to_thread` 가 게이트웨이를 계속 때린다.
+#: 즉 6.3초짜리 턴을 살리려면 여기가 아니라 그 값을 함께 올려야 한다(그 파일은 이 변경의
+#: 범위 밖이라 보고만 한다). 3.0 이 아니라 2.9 인 이유: 우리 타임아웃이 먼저 터져야
+#: `_complete` 의 로그가 남는다. 오케스트레이터가 먼저 끊으면 원인 없이 기본값만 남는다.
+DEFAULT_STRUCTURED_TIMEOUT_S = 2.9
 DEFAULT_ANSWER_TIMEOUT_S = 12.0
 
 _JSON_SYSTEM_SUFFIX = (
     "\n\nJSON 객체 하나만 출력한다. 설명, 머리말, 코드 펜스를 붙이지 않는다."
 )
+
+#: 해석 작업. `LLMTask` 값으로 식별한다. 문자열을 다시 적지 않는다.
+_INTERPRET_TASK = LLMTask.INTERPRET_MESSAGE
+
+#: `BackendBOrchestrator._interpret` 가 `input` 에 담는 키.
+_MESSAGE_KEY = "message"
+_PROFILE_KEY = "profile"
+
+
+def _interpret_prompt(request: StructuredLLMRequest) -> tuple[str, str] | None:
+    """해석 작업이면 `(system, user)`, 아니면 `None`.
+
+    ## 왜 필요한가
+
+    `complete_json` 이 시스템 문안을 직접 만들고 있었다. "너는 interpret_message 작업을
+    수행한다" + JSON Schema 덤프다. 스키마는 **모양**만 말하고 **값**은 말하지 않는다.
+    그래서 항목별 허용값 표가 모델에 한 번도 전달되지 않았고, 모델은
+    `income_bracket: "월 150만원"`, `housing_type: "self"` 처럼 표 밖의 값을 냈다.
+    `ai/conversation/interpret.py` 의 `ALLOWED_VALUES` 검사가 그것을 예외 없이 버리고,
+    `_interpret` 는 "변경 없음"을 돌려준다. 화면 증상은 하나다. **"말했는데 프로필이 안
+    바뀐다."** `ai/conversation/prompts.py` 의 해석 문안은 그 표를 담고 있었는데 아무 데서도
+    쓰이지 않았다.
+
+    ## None 을 돌려주는 경우
+
+    해석 작업이 아니거나, **입력에서 메시지를 찾지 못했을 때**다. 그러면 기존 경로로
+    떨어진다. 새 경로가 빈 메시지로 프롬프트를 만들면 모델은 표만 보고 아무 문장 없이
+    값을 짜내게 되고, 그건 지금보다 나쁘다.
+    """
+    if request.task != _INTERPRET_TASK:
+        return None
+
+    data = request.input if isinstance(request.input, Mapping) else {}
+    message = data.get(_MESSAGE_KEY)
+    if not isinstance(message, str) or not message.strip():
+        _LOGGER.warning(
+            "해석 프롬프트를 쓰지 못했습니다: task=%s 입력 키=%s (메시지 없음)",
+            request.task.value,
+            ", ".join(sorted(str(key) for key in data)),
+        )
+        return None
+
+    profile = data.get(_PROFILE_KEY)
+    if not isinstance(profile, Mapping):
+        profile = None
+
+    try:
+        return prompts.INTERPRET_SYSTEM, prompts.build_interpret_prompt(message, profile)
+    except Exception:
+        # 문안 조립 실패로 해석을 통째로 잃지 않는다. 기존 경로가 스키마만이라도 보낸다.
+        _LOGGER.exception("해석 프롬프트 조립 실패: task=%s", request.task.value)
+        return None
 
 
 class LLMOutputError(RuntimeError):
@@ -175,14 +236,24 @@ class GatewayLLMClient:
         self._answer_timeout_s = answer_timeout_s
 
     async def complete_json(self, request: StructuredLLMRequest) -> object:
-        """구조화 출력. 검증하지 않은 값을 그대로 돌려준다."""
-        system = (
-            f"너는 {request.task.value} 작업을 수행한다. "
-            f"아래 JSON Schema 를 만족하는 결과만 만든다.\n"
-            f"{json.dumps(request.output_schema, ensure_ascii=False)}"
-            f"{_JSON_SYSTEM_SUFFIX}"
-        )
-        user = json.dumps(request.input, ensure_ascii=False)
+        """구조화 출력. 검증하지 않은 값을 그대로 돌려준다.
+
+        해석 작업만 `prompts` 의 해석 문안을 쓴다(`_interpret_prompt`). 다른 작업은 스키마를
+        그대로 싣는 기존 경로다. 작업별 문안이 있는 것은 해석뿐이라, 없는 문안을 억지로
+        끼우지 않는다.
+        """
+        interpret = _interpret_prompt(request)
+        if interpret is not None:
+            system, user = interpret
+            _LOGGER.debug("해석 문안으로 부릅니다: task=%s", request.task.value)
+        else:
+            system = (
+                f"너는 {request.task.value} 작업을 수행한다. "
+                f"아래 JSON Schema 를 만족하는 결과만 만든다.\n"
+                f"{json.dumps(request.output_schema, ensure_ascii=False)}"
+                f"{_JSON_SYSTEM_SUFFIX}"
+            )
+            user = json.dumps(request.input, ensure_ascii=False)
 
         text = await self._complete(
             system=system,

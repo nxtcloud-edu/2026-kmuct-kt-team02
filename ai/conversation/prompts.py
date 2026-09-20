@@ -35,7 +35,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from . import answer, fields
 
@@ -230,6 +230,69 @@ def _value_lines() -> List[str]:
     return lines
 
 
+#: 구어 표현 → 허용값 예시. **값 목록이 아니라 매핑 예시만 담는다.**
+#:
+#: 값 목록은 ``interpret.EXTRA_FIELD_VALUES`` 가 정본이고, 이 표는 "사용자가 실제로 쓰는
+#: 말"을 그 값에 붙여 주기만 한다. 표에 없는 값을 여기 적어도 문안에 실리지 않는다
+#: (``colloquial_examples_text`` 가 정본과 맞춰 보고 버린다). 그래서 정본에서 값이 사라지면
+#: 예시도 같이 사라진다.
+#:
+#: 이 예시가 없을 때 실제로 난 일: "자취해요" 에 모델이 ``housing_type="self"`` 를 냈다.
+#: ``interpret._clean_change`` 가 허용값 밖이라 예외 없이 버려서, 화면에서는 "말했는데
+#: 프로필이 안 바뀐다"로만 보였다.
+_COLLOQUIAL_EXAMPLES: Dict[str, Dict[str, Tuple[str, ...]]] = {
+    fields.HOUSING_TYPE: {
+        "monthly_rent": ("자취해요", "원룸 살아요", "월세 살아요", "방 얻어 살아요"),
+        "parents": ("부모님 집이에요", "본가에서 살아요", "집에서 다녀요"),
+        "dormitory": ("기숙사예요", "생활관에 살아요"),
+        "jeonse": ("전세예요", "전세로 살아요"),
+    },
+}
+
+
+def colloquial_examples_text() -> str:
+    """구어 표현 → 허용값 매핑 예시 문안. 예시가 없으면 빈 문자열.
+
+    값은 ``interpret.EXTRA_FIELD_VALUES`` 와 맞춰 본 뒤에만 문안에 싣는다. 정본에 없는
+    값을 예시로 내보내면 모델이 그 값을 내고 ``interpret`` 이 조용히 버린다. 즉 예시가
+    고장을 만드는 셈이 되므로, 어긋난 예시는 아예 빠뜨리는 쪽이 맞다.
+    """
+    from . import interpret
+
+    blocks: List[str] = []
+    for field_name, examples in _COLLOQUIAL_EXAMPLES.items():
+        allowed = interpret.EXTRA_FIELD_VALUES.get(field_name)
+        if not allowed:
+            continue
+        mapped: List[str] = []
+        for value, phrases in examples.items():
+            if value not in allowed:
+                continue  # 정본에서 사라진 값은 예시도 함께 사라진다
+            mapped.append("  - " + " / ".join(f"'{p}'" for p in phrases) + f" → {value}")
+        if not mapped:
+            continue
+        blocks.append(f"- {field_name}")
+        blocks.extend(mapped)
+        rest = sorted(value for value in allowed if value not in examples)
+        if rest:
+            blocks.append(
+                "  - 남은 값(" + ", ".join(rest) + ")은 사용자가 그 뜻을 분명히 말했을 때만 쓴다."
+            )
+
+    if not blocks:
+        return ""
+
+    return "\n".join(
+        ["구어 표현은 아래 예시대로 위 표의 값으로 옮긴다."]
+        + blocks
+        + [
+            "- 예시에 없는 구어('고시원', '친척 집에 살아요' 등)는 값을 만들지 않고 그 항목을 비운다.",
+            "  표에 없는 값을 지어내면(예: 'self') 그 항목은 검증에서 버려지고 프로필은 그대로 남는다.",
+            "  틀린 값이 들어가는 것이 안 들어가는 것보다 나쁘다.",
+        ]
+    )
+
+
 def interpret_rules_text() -> str:
     """해석 규칙 문안.
 
@@ -261,6 +324,11 @@ def interpret_rules_text() -> str:
         "쓸 수 있는 항목과 값:",
     ]
     lines.extend(_value_lines())
+
+    colloquial = colloquial_examples_text()
+    if colloquial:
+        lines.extend(["", colloquial])
+
     lines.extend(
         [
             "",
@@ -337,5 +405,6 @@ __all__ = __all__ + [
     "INTERPRET_SCHEMA",
     "INTERPRET_FALLBACK",
     "interpret_rules_text",
+    "colloquial_examples_text",
     "build_interpret_prompt",
 ]

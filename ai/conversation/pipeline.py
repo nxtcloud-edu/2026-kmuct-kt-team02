@@ -629,7 +629,68 @@ def _available_footnote_ids(policies: Any, footnotes: Any) -> Tuple[int, ...]:
     return tuple(sorted(collected))
 
 
-def _output_rules_text(skeleton: Any, footnote_ids: Sequence[int]) -> str:
+#: 소유 정책을 알 수 없는 번호를 묶는 이름. 번호를 빼지 않고 이 이름으로 묶는 이유는,
+#: 빼면 모델이 쓸 수 있는 근거가 사라지고 그 문장이 정리 단계에서 삭제되기 때문이다.
+#: 소유를 모르는 것은 "쓰지 말라"와 다르다.
+UNASSIGNED_FOOTNOTE_LABEL = "소속 정책 미상"
+
+
+def _footnote_groups(
+    policies: Any, footnotes: Any, footnote_ids: Sequence[int]
+) -> Tuple[Tuple[str, Tuple[int, ...]], ...]:
+    """각주 번호를 정책별로 묶는다. ``(표시 이름, 번호들)`` 목록.
+
+    **한 줄로 몰아서 주면 모델은 어느 번호가 어느 정책 것인지 알 수 없다.** 번호가 존재하기만
+    하면 검증을 통과하던 시절의 실측 일치율이 2/7 이었다. 프롬프트에서 묶어 주고
+    ``answer.validate`` 가 어긋난 문장을 잡는다. 둘 다 필요하다 — 프롬프트만 고치면 모델이
+    또 틀리고, 검사만 넣으면 문장이 계속 삭제된다.
+
+    번호→정책 대응은 ``answer.footnote_owners`` 에서 온다. 여기서 다시 만들지 않는다.
+    프롬프트가 말하는 소유와 검증이 보는 소유가 갈라지면, 모델이 지시대로 쓴 문장이
+    삭제되는 일이 생긴다.
+
+    표시 이름은 정책 제목이다. 제목이 없으면 ``policy_id`` 를 쓴다. 제목은 문장에도 그대로
+    쓰이므로(README 6장) 모델이 두 값을 잇기 쉽고, 검증도 제목으로 문장의 정책을 가린다.
+    """
+    ownership = answer.footnote_owners(footnotes, policies)
+    remaining = [number for number in footnote_ids]
+    groups: List[Tuple[str, Tuple[int, ...]]] = []
+
+    def take(policy_id: str, label: str) -> None:
+        nonlocal remaining
+        mine = tuple(n for n in remaining if ownership.owner_of.get(n) == policy_id)
+        if not mine:
+            return
+        groups.append((label, mine))
+        remaining = [n for n in remaining if n not in mine]
+
+    # 1. 화면 표시 순서대로 (정렬은 백엔드B 몫이다, 4장)
+    seen: Set[str] = set()
+    for policy in _as_list(policies):
+        if not isinstance(policy, Mapping):
+            continue
+        policy_id = _as_text(_pick(policy, _POLICY_ID_KEYS))
+        if not policy_id or policy_id in seen:
+            continue
+        seen.add(policy_id)
+        take(policy_id, _as_text(_pick(policy, _TITLE_KEYS)) or policy_id)
+
+    # 2. 정책 목록에 없는 소유자 (각주 목록만 넘어온 경로)
+    for number in list(remaining):
+        owner = ownership.owner_of.get(number, "")
+        if owner and owner not in seen:
+            seen.add(owner)
+            take(owner, ownership.title_of.get(owner) or owner)
+
+    # 3. 소유를 모르는 번호
+    if remaining:
+        groups.append((UNASSIGNED_FOOTNOTE_LABEL, tuple(remaining)))
+    return tuple(groups)
+
+
+def _output_rules_text(
+    skeleton: Any, footnote_groups: Sequence[Tuple[str, Sequence[int]]]
+) -> str:
     """출력 규칙 블록 본문. **뼈대 줄 목록이 여기 들어간다.**
 
     ``Skeleton.outline()`` 은 "프롬프트에 그대로 넣는다"고 적혀 있는데 지금 그걸 넣는 코드가
@@ -650,10 +711,14 @@ def _output_rules_text(skeleton: Any, footnote_ids: Sequence[int]) -> str:
     if not rendered:
         lines.append("  (뼈대 없음)")
 
-    if footnote_ids:
+    if footnote_groups:
+        lines.append("[footnote_ids] 정책마다 쓸 수 있는 각주 번호가 다르다:")
+        for label, numbers in footnote_groups:
+            listed = ", ".join(f"[{number}]" for number in numbers)
+            lines.append(f"  {label}: {listed}")
         lines.append(
-            "[footnote_ids] 쓸 수 있는 각주 번호: "
-            + ", ".join(f"[{number}]" for number in footnote_ids)
+            "  각 문장은 그 문장이 말하는 정책의 번호만 쓴다. "
+            "다른 정책의 번호를 붙이면 그 문장은 삭제된다."
         )
     else:
         lines.append("[footnote_ids] 쓸 수 있는 각주 번호 없음")
@@ -704,7 +769,10 @@ def build_answer_prompt(
             source_text=source_text or "",
             profile=_profile_text(profile),
             output_rules=_output_rules_text(
-                skeleton, _available_footnote_ids(policies, footnotes)
+                skeleton,
+                _footnote_groups(
+                    policies, footnotes, _available_footnote_ids(policies, footnotes)
+                ),
             ),
         )
         # ``system`` 을 주지 않으면 ``prompts.ANSWER_SYSTEM`` 을 쓴다. 부르는 쪽이 매번
@@ -742,8 +810,21 @@ def build_answer_prompt(
 #: 길이 초과와 고정 문구 누락은 버리지 않는다. ``sanitize`` 가 이미 줄이고 붙인 뒤에도
 #: 남았다는 것은 문장 하나가 통째로 600자를 넘는 드문 경우이고, 그건 읽기 불편할 뿐
 #: 틀린 안내가 아니다. 불편함 때문에 설명을 없애지 않는다.
+#:
+#: ``mismatched_footnote`` 도 버린다. 문장이 말한 정책과 각주 소유 정책이 다르면 사용자는
+#: 근거가 있다고 읽고 각주를 눌러 다른 제도의 발췌를 본다. ``unknown_footnote`` 는 연결되지
+#: 않는 번호라 최소한 "근거를 못 찾았다"로 읽히는데, 이쪽은 **틀린 근거가 맞는 근거처럼**
+#: 보인다. 근거 없는 단정과 같은 급이거나 그보다 나쁘다. 그래서 같은 자리에 둔다.
+#:
+#: 이 코드가 ``sanitize`` 뒤에도 남는 것은 정리 단계의 결함이다(``sanitize`` 가 그 문장을
+#: 지우기로 약속했다). 결함이 났을 때 답변을 내보내는 쪽으로 열어 두지 않는다.
 BLOCKING_PROBLEM_CODES = frozenset(
-    {answer.BANNED, answer.MISSING_FOOTNOTE, answer.UNKNOWN_FOOTNOTE}
+    {
+        answer.BANNED,
+        answer.MISSING_FOOTNOTE,
+        answer.UNKNOWN_FOOTNOTE,
+        answer.MISMATCHED_FOOTNOTE,
+    }
 )
 
 #: 정리 후 고정 문구만 남은 경우의 코드. ``answer`` 의 문제 코드가 아니라 이 파일이 붙인다.
@@ -852,10 +933,13 @@ def finish_turn(
         text = answer_text if isinstance(answer_text, str) else ""
 
         # 1. 정리
-        cleaned = answer.sanitize(text, footnotes)
+        # ``policies`` 를 함께 넘긴다. 각주가 어느 정책 것인지와 문장이 어느 정책을
+        # 말하는지는 정책 제목에서 오고, 그 값이 없으면 각주 오배치 검사가 쉰다.
+        cleaned = answer.sanitize(text, footnotes, policies)
 
         # 2. 검증 (정리 후 상태를 본다)
-        check = answer.validate(cleaned.text, footnotes)
+        # 정리와 **같은 입력**으로 검사해야 "정리 결과는 검증을 통과한다"는 계약이 성립한다.
+        check = answer.validate(cleaned.text, footnotes, policies)
         blocking = [code for code in check.codes() if code in BLOCKING_PROBLEM_CODES]
         if not _has_content(cleaned.text):
             blocking.append(EMPTY_AFTER_SANITIZE)
@@ -946,6 +1030,7 @@ def _finish_metrics(
             "evidence_sentences": check.evidence_sentences,
             "cited_sentences": check.cited_sentences,
             "unknown_footnotes": list(check.unknown_footnotes),
+            "mismatched_footnotes": list(check.mismatched_footnotes),
         },
         "followup": {
             "asked_field": _as_text(question.get("field")) if question else "",
@@ -967,6 +1052,7 @@ __all__ = [
     "NOTE_RANK_NOT_INT",
     "NOTE_NO_POLICY_ID",
     "PROMPT_TODO",
+    "UNASSIGNED_FOOTNOTE_LABEL",
     "BANNED_PHRASE_LABELS",
     "ANSWER_RULE_SLOTS",
     "BLOCKING_PROBLEM_CODES",
