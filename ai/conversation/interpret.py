@@ -47,6 +47,14 @@ from . import fields
 AGE_MIN = 15
 AGE_MAX = 39
 
+# 거주지는 **대화로 바꿀 수 없다.** ``docs/01-glossary-profile.md`` 2장이 `region` 을
+# 입력받지 않는 항목으로 정했고, 서버 ``Profile.region`` 은 ``Literal[Region.SEOUL]`` 하나이며
+# ``ProfileField`` enum 에도 없다. 그래서 ``_clean_change`` 가 `region` 변경을 통째로 버린다.
+#
+# 그런데도 이 값 목록을 남기는 이유: 서버는 프로필에 `region: "seoul"` 을 담아 보내므로
+# 읽기·표시(``label_of``)·정렬(``PROFILE_FIELD_ORDER``)에는 여전히 항목이 필요하다.
+# ``outside_seoul`` 은 지난 세션에 저장된 프로필이나 통합 전 다른 모듈이 보내올 수 있는
+# 값이라 라벨을 지우지 않는다. 라벨이 없으면 화면에 값 문자열("outside_seoul")이 그대로 나간다.
 REGION_VALUES = frozenset({"seoul", "outside_seoul"})
 
 STATUS_VALUES = frozenset(
@@ -88,11 +96,20 @@ EXTRA_FIELD_VALUES: Dict[str, frozenset] = {
 # ``fields.is_askable`` 은 "물을 수 있는 항목"만 참이라 기본 항목을 걸러내지 못한다
 # (나이·거주지·상태는 폼에서 받았으므로 묻지 않지만, 대화로 정정할 수는 있다).
 # 그래서 기본 항목은 여기 별도 허용 목록을 둔다 (README 3장 "표에 없는 항목은 만들지 않는다").
+#
+# ``fields.REGION`` 은 반영되지 않는데도 **일부러 남겨 둔다.** 이 집합은 "모델이 보낸 항목
+# 이름을 아는가"를 보는 문이고, `region` 은 아는 이름이다. 여기서 빼면 ``from_model_output``
+# 의 ``known`` 검사에서 떨어져 ``DROP_UNKNOWN_FIELD`` 로 기록된다. 그러면 "모델이 표에 없는
+# 이름을 보냈다"와 "제도상 바꿀 수 없는 항목을 말했다"가 지표에서 한 코드로 섞여, 모델 품질
+# 문제인지 사용자 발화 유형인지 구분할 수 없다. 탈락은 ``_clean_change`` 가
+# ``DROP_REGION_FIXED`` 로 따로 처리한다.
 BASE_CHANGE_FIELDS = frozenset(
     {fields.AGE, fields.REGION, fields.DISTRICT, fields.STATUS, fields.INCOME_BRACKET}
 )
 
 # 값 목록으로 검증하는 항목만 모은 표. 나이(범위)와 자치구(25개 목록)는 따로 다룬다.
+# `region` 행은 변경 검증에는 더 쓰이지 않는다(``_clean_change`` 가 그 전에 버린다). 프로필에
+# 실려 오는 값이 표 안의 값인지 확인하는 읽기 쪽 기준으로 남긴다 (``REGION_VALUES`` 주석).
 ALLOWED_VALUES: Dict[str, frozenset] = {
     fields.REGION: REGION_VALUES,
     fields.STATUS: STATUS_VALUES,
@@ -181,9 +198,14 @@ VALUE_LABELS: Dict[str, Dict[str, str]] = {
 # 변경 안내 문구 틀. ``{label}`` 은 값의 화면 문구, ``{ro}`` 는 으로/로, ``{eul}`` 은 을/를.
 # 조사를 코드가 고르는 이유는 "휴학으로"와 "재직으로"처럼 값마다 달라서다.
 # "(으)로" 같은 표기는 화면 문구로 쓰기에 거칠다.
+#
+# ``fields.REGION`` 행은 없다. 이 표는 **실제로 바뀐 항목**에만 쓰이고(``merge`` 가
+# ``applied`` 를 만들 때만 ``change_notice`` 를 부른다), `region` 변경은 ``_clean_change``
+# 에서 전부 버려지므로 "거주지를 …로 바꿨어요" 는 도달할 수 없는 문구였다. 죽은 문구를 표에
+# 남겨 두면 다음 사람이 "거주지는 바꿀 수 있다"고 읽는다. 표가 곧 화면 문구의 목록이라
+# (CONTRIBUTING.md 8장) 표에 있는 문구는 나갈 수 있는 문구여야 한다.
 NOTICE_TEMPLATES: Dict[str, str] = {
     fields.AGE: "나이를 {label}{ro} 바꿨어요",
-    fields.REGION: "거주지를 {label}{ro} 바꿨어요",
     fields.DISTRICT: "사는 곳을 {label}{ro} 바꿨어요",
     fields.STATUS: "{label}{ro} 바꿨어요",
     fields.INCOME_BRACKET: "가구 소득을 {label}{ro} 바꿨어요",
@@ -356,11 +378,16 @@ DROP_AGE_RANGE = "age_out_of_range"
 DROP_AGE_TYPE = "age_not_int"
 DROP_NUMERIC_INCOME = "numeric_income"
 DROP_CATEGORY_FIELD = "category_field_not_allowed"
+# 거주지는 `seoul` 고정이라 바꿀 수 없다 (docs/01-glossary-profile.md 2장).
+# ``DROP_UNKNOWN_FIELD`` 와 따로 두는 이유는 ``BASE_CHANGE_FIELDS`` 주석에 적었다.
+DROP_REGION_FIXED = "region_is_fixed"
 DROP_SUPERSEDED = "superseded"
 DROP_SAME_AS_CURRENT = "same_as_current"
 DROP_ALREADY_ALL = "already_covered_by_all"
 DROP_WOULD_EMPTY = "would_empty_categories"
 DROP_EMPTY_POLICY_ID = "empty_policy_id"
+#: 거주지는 대화로 바꿀 수 없다. ``DROP_UNKNOWN_FIELD`` 와 따로 두는 이유는 아래 주석에 있다.
+DROP_REGION_FIXED = "region_is_fixed"
 
 # 숫자 소득으로 볼 항목 이름 조각. 모델이 표에 없는 이름으로 소득을 보낼 때를 잡는다.
 _INCOME_HINTS = ("income", "salary", "wage", "earn", "소득", "월급", "수입", "연봉")
@@ -561,6 +588,17 @@ def _clean_change(
     if field_name == fields.CATEGORIES:
         # 관심 분야는 추가·제외 구분이 필요하므로 category_changes 로만 받는다.
         return None, DROP_CATEGORY_FIELD
+
+    if field_name == fields.REGION:
+        # 거주지는 `seoul` 고정이다 (docs/01-glossary-profile.md 2장).
+        # 값이 무엇이든, 시점이 current 든 planned 든 **읽고 버린다.** 값 검증보다 앞에 두는
+        # 이유는 허용 값인 "seoul" 도 통과시키지 않아야 해서다. `region="seoul"` 을 통과시키면
+        # 프로필 값과 같아 ``DROP_SAME_AS_CURRENT`` 로 걸리는 경우가 대부분이지만,
+        # 프로필에 region 키가 없을 때는 applied 에 들어가 "거주지를 서울로 바꿨어요" 가
+        # 나간다. 사용자가 바꿀 수 없는 항목을 바꿨다고 말하는 셈이다.
+        # 서버 ``Profile.region`` 은 ``Literal[Region.SEOUL]`` 이고 ``ProfileField`` enum 에
+        # `region` 이 없으므로, 반영된 값은 검증에서 터지거나 changed_fields 키로 쓸 수 없다.
+        return None, DROP_REGION_FIXED
 
     text = _as_text(raw_value)
     if text is None:

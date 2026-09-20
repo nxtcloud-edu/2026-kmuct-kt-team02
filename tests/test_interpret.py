@@ -26,11 +26,13 @@ from ai.conversation.interpret import (
     DROP_NOT_A_MAPPING,
     DROP_NOT_ALLOWED,
     DROP_NUMERIC_INCOME,
+    DROP_REGION_FIXED,
     DROP_SAME_AS_CURRENT,
     DROP_SUPERSEDED,
     DROP_UNKNOWN_FIELD,
     DROP_WOULD_EMPTY,
     INCOME_BRACKET_NOTICE,
+    NOTICE_TEMPLATES,
     OUT_OF_SCOPE_REPLY,
     SMALLTALK_REPLY,
     apply_model_output,
@@ -38,6 +40,7 @@ from ai.conversation.interpret import (
     change_notice,
     fixed_reply_for,
     from_model_output,
+    label_of,
     merge,
     parse_model_json,
 )
@@ -156,6 +159,142 @@ class TestPlannedIsHeld(unittest.TestCase):
             profile(), {"profile_changes": [change("status", "on_leave", "언젠가")]}
         )
         self.assertEqual(result.profile["status"], "on_leave")
+
+
+class TestRegionIsFixed(unittest.TestCase):
+    """거주지는 대화로 바꿀 수 없다 (docs/01-glossary-profile.md 2장, README 3장).
+
+    이 테스트가 지키려는 계약
+      1. `region` 변경은 값이 무엇이든 프로필에 반영되지 않는다. 서버 ``Profile.region`` 은
+         ``Literal[Region.SEOUL]`` 하나이고 ``ProfileField`` enum 에 `region` 이 없다.
+         반영하면 프로필이 서버 검증에서 막히고 changed_fields 키로도 쓸 수 없다.
+      2. 버린 이유는 ``DROP_REGION_FIXED`` 다. ``DROP_UNKNOWN_FIELD`` 로 섞이면
+         "모델이 표에 없는 이름을 보냈다"와 "제도상 바꿀 수 없는 항목이다"를 지표에서
+         구분할 수 없다.
+      3. 한 항목 때문에 턴 전체가 죽지 않는다. 같은 턴의 다른 변경은 정상 반영된다.
+      4. 시점이 `planned` 여도 보류되지 않는다. "거주지가 바뀐 뒤 기준"은 존재할 수 없다.
+    """
+
+    # 허용 값 표에 있던 두 값 모두. "seoul" 은 프로필 값과 같아 얼핏 무해해 보이지만,
+    # 통과시키면 프로필에 region 키가 없을 때 "거주지를 서울로 바꿨어요" 가 나간다.
+    VALUES = ("outside_seoul", "seoul")
+
+    def test_거주지_변경은_프로필에_반영되지_않는다(self):
+        for value in self.VALUES:
+            with self.subTest(value=value):
+                before = profile()
+                _, result = apply_model_output(
+                    before, {"profile_changes": [change("region", value)]}
+                )
+                self.assertEqual(
+                    result.profile["region"],
+                    "seoul",
+                    f"region={value} 가 프로필에 반영됐다: {result.profile['region']!r}",
+                )
+                self.assertEqual(
+                    applied_fields(result),
+                    [],
+                    f"region={value} 가 바뀐 항목에 들어갔다: {applied_fields(result)}",
+                )
+                self.assertIsNone(
+                    result.to_profile_update(),
+                    "거주지만 말한 턴에 프로필 갱신 이벤트를 보냈다",
+                )
+
+    def test_버린_이유가_region_is_fixed다(self):
+        """이유 코드를 unknown_field 로 섞으면 지표에서 원인을 알 수 없다."""
+        for value in self.VALUES:
+            with self.subTest(value=value):
+                _, result = apply_model_output(
+                    profile(), {"profile_changes": [change("region", value)]}
+                )
+                self.assertIn(
+                    DROP_REGION_FIXED,
+                    reasons(result),
+                    f"region={value} 의 이유 코드가 {reasons(result)} 였다",
+                )
+                self.assertNotIn(
+                    DROP_UNKNOWN_FIELD,
+                    reasons(result),
+                    "제도상 바꿀 수 없는 항목이 모르는 항목으로 기록됐다",
+                )
+
+    def test_같은_값으로_바꾸려_해도_region_is_fixed다(self):
+        """프로필과 같은 값이어도 ``same_as_current`` 가 아니다.
+
+        ``same_as_current`` 는 "바꿀 수 있지만 값이 같다"는 뜻이라 다음 턴에 다른 값이면
+        반영된다는 말이 된다. 거주지는 어떤 값이든 반영되지 않으므로 이유가 다르다.
+        """
+        _, result = apply_model_output(
+            profile(), {"profile_changes": [change("region", "seoul")]}
+        )
+        self.assertEqual(
+            reasons(result),
+            [DROP_REGION_FIXED],
+            f"이유 코드가 {reasons(result)} 였다",
+        )
+
+    def test_거주지가_섞여_있어도_같은_턴의_다른_변경은_반영된다(self):
+        """한 항목이 걸려 턴 전체가 죽으면 사용자는 말한 것이 통째로 무시됐다고 느낀다."""
+        _, result = apply_model_output(
+            profile(),
+            {
+                "profile_changes": [
+                    change("region", "outside_seoul"),
+                    change("status", "on_leave"),
+                    change("district", "마포구"),
+                ],
+                "extra_answers": [change("housing_type", "monthly_rent")],
+            },
+        )
+        self.assertEqual(result.profile["status"], "on_leave")
+        self.assertEqual(result.profile["district"], "마포구")
+        self.assertEqual(result.profile["housing_type"], "monthly_rent")
+        self.assertEqual(result.profile["region"], "seoul")
+        self.assertEqual(
+            applied_fields(result),
+            ["district", "status", "housing_type"],
+            f"바뀐 항목이 {applied_fields(result)} 였다",
+        )
+        self.assertIn(DROP_REGION_FIXED, reasons(result))
+
+    def test_planned_거주지_변경도_보류되지_않는다(self):
+        """보류하면 "거주지가 바뀐 뒤 기준으로 볼까요" 질문이 나간다. 그 시점은 없다."""
+        interpretation, result = apply_model_output(
+            profile(),
+            {"profile_changes": [change("region", "outside_seoul", fields.PLANNED)]},
+        )
+        self.assertEqual(
+            interpretation.planned_changes,
+            (),
+            f"planned 목록에 {[c.field for c in interpretation.planned_changes]} 가 남았다",
+        )
+        self.assertEqual(
+            result.held,
+            (),
+            f"보류 목록에 {[c.field for c in result.held]} 가 들어갔다",
+        )
+        self.assertFalse(result.needs_planned_confirmation)
+        self.assertIn(DROP_REGION_FIXED, reasons(result))
+
+    def test_거주지_변경_안내_문구는_남아_있지_않다(self):
+        """반영되지 않는 항목의 안내 문구를 표에 남기면 다음 사람이 바꿀 수 있다고 읽는다."""
+        self.assertNotIn(
+            fields.REGION,
+            NOTICE_TEMPLATES,
+            "도달할 수 없는 거주지 변경 안내 문구가 표에 남아 있다",
+        )
+        self.assertEqual(change_notice(fields.REGION, "outside_seoul"), "")
+
+    def test_거주지_값은_읽기와_표시에_그대로_쓴다(self):
+        """지워진 것은 변경 경로뿐이다. 서버가 프로필에 담아 보내는 값은 계속 읽는다."""
+        _, result = apply_model_output(profile(), {"profile_changes": []})
+        self.assertEqual(
+            result.profile["region"], "seoul", "입력 프로필의 거주지가 사라졌다"
+        )
+        for value, expected in (("seoul", "서울"), ("outside_seoul", "서울 밖")):
+            with self.subTest(value=value):
+                self.assertEqual(label_of(fields.REGION, value), expected)
 
 
 class TestCurrentOverwritesForm(unittest.TestCase):
@@ -477,7 +616,8 @@ class TestChangeNotice(unittest.TestCase):
         ("housing_type", "monthly_rent", "주거 형태를 월세로 바꿨어요"),
         ("housing_type", "jeonse", "주거 형태를 전세로 바꿨어요"),
         ("district", "마포구", "사는 곳을 마포구로 바꿨어요"),
-        ("region", "outside_seoul", "거주지를 서울 밖으로 바꿨어요"),
+        # `region` 행은 뺐다. 거주지는 `seoul` 고정이라 변경이 반영되지 않으므로
+        # 이 문구는 나갈 수 없다 (``TestRegionIsFixed`` 가 그 계약을 지킨다).
         ("age", 24, "나이를 만 24세로 바꿨어요"),
     )
 

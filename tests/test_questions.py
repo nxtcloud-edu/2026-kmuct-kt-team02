@@ -14,11 +14,17 @@ import unittest
 from ai.conversation import fields
 from ai.conversation.questions import (
     MAX_REASON_POLICIES,
+    PLANNED_BASIS_QUESTION_FALLBACK,
+    PLANNED_BASIS_QUESTIONS,
+    PLANNED_BASIS_REASON_FALLBACK,
+    PLANNED_BASIS_REASONS,
     PLANNED_CHANGE_QUESTION,
     TEMPLATES,
     build,
     get,
     missing_templates,
+    planned_question,
+    planned_reason,
 )
 
 # docs/01-glossary-profile.md 2장(가구 소득) 순서 그대로.
@@ -292,6 +298,59 @@ class TestPlannedChangeQuestion(unittest.TestCase):
         for phrase in BANNED_PHRASES:
             with self.subTest(phrase=phrase):
                 self.assertNotIn(phrase, PLANNED_CHANGE_QUESTION.question)
+
+
+class TestPlannedBasisRegionRemoved(unittest.TestCase):
+    """거주지에는 planned 확인 질문을 만들지 않는다.
+
+    이 테스트가 지키려는 계약
+      거주지는 `seoul` 고정이라(``docs/01-glossary-profile.md`` 2장)
+      ``interpret._clean_change`` 가 `region` 변경을 시점과 무관하게 버린다. 보류되는
+      일이 없으므로 "거주지가 바뀐 뒤 기준" 이라는 시점도 없다. 표에 행을 남겨 두면
+      도달할 수 없는 문구가 화면 문구 목록에 섞여, 다음 사람이 거주지를 대화로 바꿀 수
+      있다고 읽는다.
+    """
+
+    def test_두_표에_거주지_행이_없다(self):
+        for label, table in (
+            ("질문 틀", PLANNED_BASIS_QUESTIONS),
+            ("이유 문구", PLANNED_BASIS_REASONS),
+        ):
+            with self.subTest(table=label):
+                self.assertNotIn(
+                    fields.REGION,
+                    table,
+                    f"{label} 표에 거주지 행이 남아 있다: {table.get(fields.REGION)!r}",
+                )
+
+    def test_거주지를_넘기면_항목_이름_없는_기본_문구로_떨어진다(self):
+        """표에 없는 항목의 처리와 같아야 한다. 즉석 작문으로 새 문구를 만들지 않는다."""
+        question = planned_question(fields.REGION, "서울 밖")
+        self.assertEqual(
+            question,
+            PLANNED_BASIS_QUESTION_FALLBACK,
+            f"거주지 전용 질문이 만들어졌다: {question!r}",
+        )
+        reason = planned_reason(fields.REGION)
+        self.assertEqual(
+            reason,
+            PLANNED_BASIS_REASON_FALLBACK,
+            f"거주지 전용 이유 문구가 만들어졌다: {reason!r}",
+        )
+
+    def test_어느_표에도_거주지를_말하는_문구가_없다(self):
+        """항목 이름을 다른 키로 옮겨 적는 실수까지 잡는다."""
+        for table_label, table in (
+            ("질문 틀", PLANNED_BASIS_QUESTIONS),
+            ("이유 문구", PLANNED_BASIS_REASONS),
+        ):
+            for field, text in table.items():
+                with self.subTest(table=table_label, field=field):
+                    self.assertNotIn(
+                        "거주지",
+                        text,
+                        f"{table_label}[{field}] 가 거주지를 말한다: {text!r}",
+                    )
 
 
 if __name__ == "__main__":
