@@ -111,6 +111,29 @@ class SessionStore:
             self._sessions[parsed_id] = refreshed
             return self._copy(refreshed)
 
+    def update_profile(self, session_id: UUID | str, profile: Profile) -> Session:
+        """Replace only the validated profile and refresh the sliding TTL."""
+
+        if not isinstance(profile, Profile):
+            raise TypeError("profile must be a validated Profile")
+        parsed_id = self._parse_session_id(session_id)
+        now = self._now()
+        with self._lock:
+            session = self._sessions.get(parsed_id)
+            if session is None:
+                raise SessionNotFoundError("session not found")
+            if session.expires_at <= now:
+                del self._sessions[parsed_id]
+                raise SessionExpiredError("session expired")
+            updated = replace(
+                session,
+                profile=profile.model_copy(deep=True),
+                last_accessed_at=now,
+                expires_at=now + self._ttl,
+            )
+            self._sessions[parsed_id] = updated
+            return self._copy(updated)
+
     def delete(self, session_id: UUID | str) -> bool:
         parsed_id = self._parse_session_id(session_id)
         with self._lock:
