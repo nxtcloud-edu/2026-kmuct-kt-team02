@@ -11,15 +11,20 @@
 | `checklist` | 공고 원문에서 서류·신청 단계 추출 |
 | `prompt` | 예외 조건 판정 프롬프트 조립 |
 | `schema` | 판정 출력 스키마와 방어적 파싱 |
+| `client` | 모델 호출. **여기서만 한다** |
 | `judge` | 판정 오케스트레이션 (시간 예산, 재시도, 실패 흡수) |
 | `cases` | 판정 평가 케이스 J1~J8 |
 | `scoring` | 판정 평가 채점 |
+| `grounding` | 근거 없는 조건 자동 검출 |
+| `metrics` | 발표 지표 집계 |
+| `integration` | 내부 조건을 API 조건 모양으로 변환 |
+| `readiness` | 실전 호출 준비 상태 점검 |
 
 운영 경로는 `ExceptionJudge.judge_and_verify()` 를 쓴다. 판정과 인용 검증을 한 번에
 끝내므로 원문에 없는 발췌가 화면으로 나갈 수 없다.
 
-모델 호출은 `ai/conversation/llm.py` 의 `Gateway` 로 한다. 이 폴더에 호출부를
-따로 두지 않는다. 세 호출 지점이 전체 20초 예산을 나눠 쓰기 때문이다.
+`client` 를 import 해도 `anthropic` 패키지는 필요하지 않다. 실제 호출 시점에
+지연 import 한다.
 """
 
 from ai.judgment.cases import CASES, ExceptionCase, placeholder_cases
@@ -33,9 +38,11 @@ from ai.judgment.citation import (
     verify_conditions,
     verify_excerpt,
 )
-
+from ai.judgment.client import ClaudeClient, ClaudeConfig, LLMClient, LLMError, load_config
 from ai.judgment.conditional_note import build_conditional_note
+from ai.judgment.integration import PublicConditionBatch, public_conditions
 from ai.judgment.judge import ExceptionJudge, JudgeStats
+from ai.judgment.metrics import MetricsReport, collect
 from ai.judgment.normalize import canonical, normalize, normalize_with_map
 from ai.judgment.prompt import JUDGE_SYSTEM_PROMPT, build_judge_prompt
 from ai.judgment.schema import JUDGE_OUTPUT_SCHEMA, ParseOutcome, parse_conditions
@@ -93,6 +100,15 @@ __all__ = [
     "JUDGE_OUTPUT_SCHEMA",
     "parse_conditions",
     "ParseOutcome",
+    # API 경계
+    "PublicConditionBatch",
+    "public_conditions",
+    # 모델 호출
+    "ClaudeClient",
+    "ClaudeConfig",
+    "LLMClient",
+    "LLMError",
+    "load_config",
     # 평가
     "CASES",
     "ExceptionCase",
@@ -102,4 +118,7 @@ __all__ = [
     "Report",
     "CaseOutcome",
     "Judge",
+    # 지표
+    "MetricsReport",
+    "collect",
 ]

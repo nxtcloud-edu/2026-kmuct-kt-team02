@@ -1,30 +1,24 @@
 """예외 조건 판정 (`ai/judgment/README.md` 3~5장, 9장).
 
-모델 호출은 **`ai/conversation/llm.py` 의 `Gateway` 로 한다.** 이 모듈에 호출부를
-따로 두지 않는다.
+`prompt.py` · `client.py` · `schema.py` · `citation.py` 를 묶어 정책 하나의
+예외 조건을 판정한다. **이 모듈은 절대 예외를 던지지 않는다.**
+판정이 전부 실패해도 규칙 엔진 결과로 카드는 이미 화면에 있고, 여기서 예외가
+새어 나가면 그 카드까지 사라진다.
 
-왜 그쪽을 쓰는가
-----------------
-모델을 부르는 곳은 세 곳뿐이고(메시지 해석·예외 조건 판정·답변 작성) 그 셋이 전체
-20초를 나눠 쓴다. 호출부를 담당자별로 두면 두 가지가 깨진다.
+시간 예산 (`docs/03-api-contract.md` 9장, `docs/research/04-llm-api-operations.md` 3장)
+----------------------------------------------------------------------------------
+정책당 8초. 그 안에서 호출 한 번은 6초로 잡고, 남는 2초를 재시도 여유로 둔다.
 
-- **예산을 각자 계산한다.** 해석 3초 + 판정 8초 + 답변이 각각 자기 시계를 보면
-  합쳐서 20초를 넘길 수 있다. `BudgetTracker` 하나를 공유해야 마지막 호출이
-  남은 예산만큼만 쓴다
-- 모델 이름과 환경 변수가 두 벌이 된다. 키를 한쪽만 설정하면 다른 쪽이 조용히 실패한다
+| 실패 | 재시도 | 이유 |
+| --- | --- | --- |
+| 형식 깨짐(`schema`) | 1회 | 같은 입력에 형식만 틀린 경우가 있어 한 번은 가치가 있다 |
+| 서버 오류(`server`) | 1회 | 공식 권고는 지수 백오프지만 우리 예산에서는 한 번이 한계다 |
+| 시간 초과(`timeout`) | **없음** | 재시도하면 또 그만큼 걸려 전체 20초 상한을 넘긴다 |
+| 속도 제한(`rate_limit`) | **없음** | 대기 시간이 우리 예산보다 길다. 동시 요청 수를 줄이는 게 빠르다 |
+| 용량 부족(`overloaded`) | **없음** | 재시도로 풀리지 않는다. **데모 모드로 넘길 신호다** |
 
-`CALL_SITE_POLICIES[CallSite.JUDGE]` 에 우리 예산이 이미 들어 있다.
-정책당 8초, 스키마 강제, 낮은 온도, 형식 오류만 1회 재시도, 폴백은 "그 정책의 예외
-조건 전체를 미확인". 그래서 이 모듈은 **재시도도 타임아웃도 직접 다루지 않는다.**
-`Gateway` 가 실패를 흡수해 폴백으로 돌려주므로 예외도 올라오지 않는다.
-
-이 모듈이 하는 일
------------------
-1. 프롬프트를 만든다 (`prompt.py`)
-2. `Gateway.call_structured(CallSite.JUDGE, ...)` 를 부른다
-3. 결과를 조건 목록으로 바꾼다 (`schema.py`)
-4. 실패를 `unknown` 자리표시로 바꾼다 (`citation.placeholder_unknown`)
-5. 운영 경로에서는 인용 검증까지 끝낸다 (`citation.verify_conditions`)
+재시도 여부는 `client.LLMError.retryable` 이 정한다. 이 모듈이 다시 판단하지 않는다.
+남은 예산이 없으면 재시도할 수 있는 실패라도 넘어간다.
 
 실패는 빈 목록이 아니다
 -----------------------
@@ -35,90 +29,81 @@
 
 `exceptions_text` 가 **비어 있으면** 판정을 생략하고 빈 목록을 돌려준다.
 이때는 예외 조건이 없는 정책이므로 조건 0개가 맞다.
+
+동시 실행
+---------
+후보별로 동시에 보내되 상한을 둔다(기본 3). 후보 수만큼 무조건 늘리면 분당 요청
+수와 토큰 수 한도에 걸린다(연구 문서 4장).
 """
 
 from __future__ import annotations
 
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
-from ai.conversation.llm import (
-    CallSite,
-    Gateway,
-    ModelCapacityError,
-    run_parallel,
-)
 from ai.judgment.citation import placeholder_unknown, verify_conditions
+from ai.judgment.client import (
+    KIND_OVERLOADED,
+    KIND_TIMEOUT,
+    KIND_UNKNOWN,
+    ClaudeClient,
+    LLMClient,
+    LLMError,
+)
 from ai.judgment.prompt import JUDGE_SYSTEM_PROMPT, build_judge_prompt
-from ai.judgment.schema import JUDGE_OUTPUT_SCHEMA, conditions_from_data
+from ai.judgment.schema import JUDGE_OUTPUT_SCHEMA, parse_conditions
 
-#: 판정 실패 시 `Gateway` 가 돌려줄 값. 조건이 없는 모양이고, 이 모듈이 자리표시로 바꾼다.
-#: 폴백 값의 모양은 호출 지점마다 다르므로 `Gateway` 가 아니라 우리가 준다.
-JUDGE_FALLBACK: Dict[str, Any] = {"conditions": []}
+#: 정책 하나에 쓸 수 있는 전체 시간 (`docs/03-api-contract.md` 9장 7단계)
+DEFAULT_POLICY_BUDGET = 8.0
 
-#: 모델은 성공했다고 했지만 조건을 하나도 못 뽑은 경우의 사유 코드.
+#: 호출 한 번의 제한. 남는 시간이 재시도 여유다.
+DEFAULT_CALL_TIMEOUT = 6.0
+
+#: 동시 판정 상한. 후보가 5건이어도 이 수만큼만 동시에 보낸다.
+DEFAULT_MAX_WORKERS = 3
+
+#: 후보 묶음 전체에 쓰는 상한. 5개를 worker 3개로 두 wave 실행해도
+#: AI B 단계가 16초가 되지 않게 한다. 남은 후보는 호출하지 않고 unknown 처리한다.
+DEFAULT_BATCH_BUDGET = 8.0
+
+#: 예외 문장이 있는데 모델이 조건을 하나도 돌려주지 않은 경우.
 REASON_NO_CONDITIONS = "no_conditions"
-
-#: 어댑터가 형식을 지키지 않아 조건으로 바꿀 수 없는 경우.
-REASON_BAD_SHAPE = "bad_shape"
 
 
 @dataclass
 class JudgeStats:
     """지표용 기록 (`docs/03-api-contract.md` 13장).
 
-    호출 수·재시도·실패 종류는 `Gateway.metrics` 가 이미 센다. 여기서는 **그쪽이
-    세지 않는 것만** 센다. 같은 것을 두 군데서 세면 어긋나는 순간 어느 쪽이 맞는지 모른다.
-
     사용자 메시지 원문과 프로필은 남기지 않는다. 숫자만 센다.
     """
 
-    #: `exceptions_text` 가 비어 판정을 생략한 정책 수
+    calls: int = 0
+    retries: int = 0
+    successes: int = 0
+    failures: int = 0
     skipped: int = 0
-    #: 조건을 돌려받은 정책 수
-    judged: int = 0
-    #: 자리표시로 떨어진 정책 수
-    placeholders: int = 0
-    #: 파싱에서 버린 항목 수
     parse_dropped: int = 0
-    #: 자리표시 사유별 건수
-    failure_reasons: Dict[str, int] = field(default_factory=dict)
-
-    #: `Gateway` 지표를 함께 보기 위한 참조. 없으면 None
-    gateway_metrics: Optional[Dict[str, Any]] = None
+    failure_kinds: Dict[str, int] = field(default_factory=dict)
 
     @property
     def overloaded(self) -> int:
-        """용량 부족 건수. 0이 아니면 데모 모드로 넘길 신호다.
-
-        `Gateway` 가 센 값을 읽는다. 우리가 따로 세지 않는다.
-        """
-        direct = self.failure_reasons.get(ModelCapacityError.reason, 0)
-        if self.gateway_metrics:
-            failures = self.gateway_metrics.get("failures") or {}
-            return failures.get(ModelCapacityError.reason, direct)
-        return direct
+        """용량 부족 건수. 0이 아니면 데모 모드로 넘길 신호다."""
+        return self.failure_kinds.get(KIND_OVERLOADED, 0)
 
     def summary(self) -> str:
         lines = [
-            f"판정한 정책 {self.judged} / 자리표시 {self.placeholders} / 생략 {self.skipped}",
+            f"판정 호출 {self.calls}회 (재시도 {self.retries}회)",
+            f"성공 {self.successes} / 실패 {self.failures} / 생략 {self.skipped}",
             f"파싱에서 버린 항목 {self.parse_dropped}건",
         ]
-        if self.failure_reasons:
+        if self.failure_kinds:
             detail = ", ".join(
-                f"{reason} {count}"
-                for reason, count in sorted(self.failure_reasons.items())
+                f"{kind} {count}" for kind, count in sorted(self.failure_kinds.items())
             )
-            lines.append(f"실패 사유: {detail}")
-        if self.gateway_metrics:
-            lines.append(
-                "모델 호출 {calls}회 (재시도 {retries}, 건너뜀 {skipped})".format(
-                    calls=self.gateway_metrics.get("calls", 0),
-                    retries=self.gateway_metrics.get("retries", 0),
-                    skipped=self.gateway_metrics.get("skipped", 0),
-                )
-            )
+            lines.append(f"실패 종류: {detail}")
         if self.overloaded:
             lines.append("주의: 용량 부족이 있었다. 데모는 데모 모드로 돌린다")
         return "\n".join(lines)
@@ -130,25 +115,27 @@ class ExceptionJudge:
     ``judge_policy`` 는 `scoring.Judge` 와 같은 모양이라 평가 하네스에 그대로 넣을 수 있다.
 
         from ai.judgment.scoring import evaluate
-        report = evaluate(ExceptionJudge(gateway).judge_policy)
+        report = evaluate(ExceptionJudge().judge_policy)
 
     **운영 경로에서는 ``judge_and_verify`` 를 쓴다.** 인용 검증까지 끝낸 조건을
     돌려주므로 원문에 없는 발췌가 화면으로 나갈 수 없다.
-
-    `Gateway` 는 **턴마다 새로 만든 것을 받는다.** 예산 추적기를 공유하기 때문이다.
-    서버가 `/chat` 한 번에 하나를 만들어 해석·판정·답변에 같이 넘긴다.
-    넘기지 않으면 어댑터 없는 `Gateway` 를 만들어 쓰고, 그때는 모든 정책이
-    자리표시(`no_adapter`)로 떨어진다. 카드는 규칙 엔진 결과로 그대로 서 있다.
+    ``judge_policy`` 만 쓰면 부르는 쪽이 검증을 잊을 수 있다.
     """
 
     def __init__(
         self,
-        gateway: Optional[Gateway] = None,
+        client: Optional[LLMClient] = None,
         *,
-        max_workers: Optional[int] = None,
+        policy_budget: float = DEFAULT_POLICY_BUDGET,
+        call_timeout: float = DEFAULT_CALL_TIMEOUT,
+        max_workers: int = DEFAULT_MAX_WORKERS,
+        batch_budget: float = DEFAULT_BATCH_BUDGET,
     ) -> None:
-        self.gateway = gateway if gateway is not None else Gateway(adapter=None)
-        self.max_workers = max_workers
+        self._client = client if client is not None else ClaudeClient()
+        self.policy_budget = policy_budget
+        self.call_timeout = call_timeout
+        self.max_workers = max(1, max_workers)
+        self.batch_budget = max(0.0, batch_budget)
         self.stats = JudgeStats()
         self._lock = threading.Lock()
 
@@ -158,18 +145,10 @@ class ExceptionJudge:
         with self._lock:
             setattr(self.stats, name, getattr(self.stats, name) + amount)
 
-    def _count_placeholder(self, reason: str) -> None:
+    def _count_failure(self, kind: str) -> None:
         with self._lock:
-            self.stats.placeholders += 1
-            self.stats.failure_reasons[reason] = (
-                self.stats.failure_reasons.get(reason, 0) + 1
-            )
-
-    def stats_snapshot(self) -> JudgeStats:
-        """`Gateway` 지표를 붙인 기록. 14:30 이후 지표 정리에 쓴다."""
-        with self._lock:
-            self.stats.gateway_metrics = self.gateway.metrics_snapshot()
-            return self.stats
+            self.stats.failures += 1
+            self.stats.failure_kinds[kind] = self.stats.failure_kinds.get(kind, 0) + 1
 
     # -- 판정 ---------------------------------------------------------------
 
@@ -178,11 +157,10 @@ class ExceptionJudge:
         exceptions_text: object,
         profile: Optional[Dict[str, Any]],
         raw_text: object,
+        *,
+        deadline: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """정책 하나의 예외 조건을 판정한다. **예외를 던지지 않는다.**
-
-        재시도와 타임아웃은 `Gateway` 가 정책표대로 처리한다. 이 함수는 결과를
-        조건 목록으로 바꾸고 실패를 자리표시로 흡수하는 일만 한다.
 
         돌려주는 조건은 아직 **인용 검증을 거치지 않았다.** 화면에 내보내기 전에
         `citation.verify_conditions()` 를 통과시켜야 한다. 운영 경로는
@@ -193,49 +171,75 @@ class ExceptionJudge:
             self._count("skipped")
             return []
 
-        user = build_judge_prompt(
-            str(exceptions_text), profile or {}, str(raw_text or "")
-        )
+        system = JUDGE_SYSTEM_PROMPT
+        user = build_judge_prompt(str(exceptions_text), profile or {}, str(raw_text or ""))
 
-        try:
-            outcome = self.gateway.call_structured(
-                CallSite.JUDGE,
-                system=JUDGE_SYSTEM_PROMPT,
-                user=user,
-                schema=JUDGE_OUTPUT_SCHEMA,
-                fallback=JUDGE_FALLBACK,
-            )
-        except Exception:
-            # Gateway 는 실패를 흡수하도록 만들어져 있지만, 그래도 새어 나오는 경우까지
-            # 막는다. 판정 하나 때문에 규칙 엔진이 띄운 카드가 사라지면 안 된다.
-            return self._placeholder(REASON_BAD_SHAPE)
+        remaining = self.policy_budget
+        if deadline is not None:
+            remaining = min(remaining, max(0.0, deadline - time.monotonic()))
+        attempt = 0
+        last_kind = KIND_TIMEOUT if remaining <= 0 else KIND_UNKNOWN
 
-        if not outcome.ok:
-            return self._placeholder(outcome.failure or REASON_BAD_SHAPE)
+        while True:
+            if deadline is not None:
+                remaining = min(remaining, max(0.0, deadline - time.monotonic()))
+            timeout = min(self.call_timeout, remaining)
+            if timeout <= 0:
+                break
 
-        parsed = conditions_from_data(outcome.data)
-        if parsed.dropped:
-            self._count("parse_dropped", len(parsed.dropped))
+            attempt += 1
+            if attempt > 1:
+                self._count("retries")
+            self._count("calls")
 
-        if not parsed.ok:
-            return self._placeholder(parsed.error or REASON_BAD_SHAPE)
+            try:
+                body = self._client.complete(
+                    system=system,
+                    user=user,
+                    timeout=timeout,
+                    schema=JUDGE_OUTPUT_SCHEMA,
+                )
+            except LLMError as exc:
+                remaining -= timeout
+                last_kind = exc.kind
+                if exc.retryable and attempt == 1 and remaining > 0:
+                    continue
+                break
+            except Exception:
+                # 클라이언트가 LLMError 가 아닌 것을 던진 경우까지 흡수한다.
+                # 판정 하나 때문에 응답 전체를 실패시키지 않는다.
+                last_kind = KIND_UNKNOWN
+                break
 
-        if not parsed.conditions:
-            # 예외 문장이 있는데 조건을 하나도 못 뽑았다. 빈 목록으로 두면 조건 0개가 되어
-            # 판정 상태가 likely 로 갈 수 있다. 판단이 갈릴 때는 unknown 쪽으로 둔다.
-            return self._placeholder(REASON_NO_CONDITIONS)
+            outcome = parse_conditions(body)
+            if outcome.dropped:
+                self._count("parse_dropped", len(outcome.dropped))
 
-        self._count("judged")
-        return parsed.conditions
+            if outcome.ok:
+                if not outcome.conditions:
+                    # 예외 문장이 있는데 빈 목록은 "조건 없음"이 아니라 판정 누락이다.
+                    # 그대로 반환하면 모든 조건 met 으로 계산되어 likely 로 갈 수 있다.
+                    last_kind = REASON_NO_CONDITIONS
+                    break
+                self._count("successes")
+                return outcome.conditions
 
-    def _placeholder(self, reason: str) -> List[Dict[str, Any]]:
-        self._count_placeholder(reason)
-        return [placeholder_unknown(reason)]
+            # 형식이 깨졌다. 한 번은 다시 시도할 가치가 있다 (연구 문서 3장).
+            remaining -= timeout
+            last_kind = "schema"
+            if attempt == 1 and remaining > 0:
+                continue
+            break
+
+        self._count_failure(last_kind)
+        return [placeholder_unknown(last_kind)]
 
     def judge_and_verify(
         self,
         policy: Dict[str, Any],
         profile: Optional[Dict[str, Any]] = None,
+        *,
+        deadline: Optional[float] = None,
     ) -> Dict[str, Any]:
         """판정하고 인용 검증까지 끝낸다. **운영 경로는 이것을 쓴다.**
 
@@ -249,7 +253,7 @@ class ExceptionJudge:
         """
         raw_text = policy.get("raw_text") or ""
         conditions = self.judge_policy(
-            policy.get("exceptions_text"), profile, raw_text
+            policy.get("exceptions_text"), profile, raw_text, deadline=deadline
         )
         checked, removed = verify_conditions(conditions, raw_text)
         return {
@@ -265,40 +269,24 @@ class ExceptionJudge:
     ) -> List[Dict[str, Any]]:
         """후보 정책들을 동시에 판정한다. 입력 순서를 유지해 돌려준다.
 
-        동시 실행 수는 `ai/conversation/llm.py` 의 `run_parallel` 이 제한한다.
-        기본값은 설정(`KMUCT_LLM_MAX_CONCURRENCY`)에서 읽고, 없으면 3이다.
-        후보 수만큼 무조건 늘리면 분당 요청 수와 토큰 수 한도에 걸린다.
+        동시 실행 수는 `max_workers` 로 제한한다. 후보 수만큼 무조건 늘리면
+        분당 요청 수 한도에 걸린다 (연구 문서 4장).
 
-        정책 하나가 실패해도 나머지는 그대로 돌아온다. `judge_policy` 가 예외를
-        던지지 않으므로 `run_parallel` 의 예외 처리까지 갈 일은 없다.
+        정책 하나가 실패해도 나머지는 그대로 돌아온다.
         """
         items = list(policies)
         if not items:
             return []
+
+        deadline = time.monotonic() + self.batch_budget
         if len(items) == 1:
-            return [self.judge_and_verify(items[0], profile)]
+            return [self.judge_and_verify(items[0], profile, deadline=deadline)]
 
-        # 같은 정책 번호가 두 번 들어와도 결과를 잃지 않게 위치로 키를 만든다.
-        tasks = {
-            str(index): (lambda p=policy: self.judge_and_verify(p, profile))
-            for index, policy in enumerate(items)
-        }
-        results = run_parallel(tasks, max_workers=self.max_workers)
-
-        out: List[Dict[str, Any]] = []
-        for index, policy in enumerate(items):
-            item = results.get(str(index))
-            if item is not None and item.ok and item.value is not None:
-                out.append(item.value)
-                continue
-            # run_parallel 이 시간 초과로 결과를 못 받은 경우. 카드는 유지되어야 한다.
-            reason = (item.failure if item is not None else None) or REASON_BAD_SHAPE
-            self._count_placeholder(reason)
-            out.append(
-                {
-                    "policy_id": policy.get("id"),
-                    "conditions": [placeholder_unknown(reason)],
-                    "removed": [],
-                }
+        workers = min(self.max_workers, len(items))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(
+                pool.map(
+                    lambda p: self.judge_and_verify(p, profile, deadline=deadline),
+                    items,
+                )
             )
-        return out

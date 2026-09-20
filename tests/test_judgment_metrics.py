@@ -227,7 +227,7 @@ class TestNotes(unittest.TestCase):
         from ai.judgment.judge import JudgeStats
 
         stats = JudgeStats()
-        stats.failure_reasons["capacity"] = 1
+        stats.failure_kinds["overloaded"] = 1
         report = collect(judge_stats=stats)
         self.assertTrue(any("데모 모드" in n for n in report.notes), report.notes)
 

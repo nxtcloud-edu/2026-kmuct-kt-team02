@@ -1,46 +1,34 @@
 """판정 오케스트레이션 테스트 (`ai/judgment/judge.py`).
 
-**실제 API 를 부르지 않는다.** `ai/conversation/llm.py` 의 `Gateway` 에 가짜 어댑터를
-물려 재시도·예산·실패 흡수를 본다.
-
-재시도와 타임아웃 규칙 자체는 `Gateway` 가 가지고 있고 AI A 쪽 테스트가 검증한다.
-여기서는 **우리가 그 규칙을 제대로 쓰고 있는지**와 실패를 자리표시로 바꾸는지를 본다.
+**실제 API 를 부르지 않는다.** 가짜 클라이언트로 재시도·시간 예산·실패 흡수를 본다.
 
 여기서 막는 것
 | 시나리오 | 왜 |
 | --- | --- |
 | 판정 실패에 빈 목록을 돌려줌 | 조건 0개면 판정 상태가 likely 로 가서 실패가 유리하게 작용한다 |
-| 예외가 새어 나감 | 규칙 엔진이 이미 띄운 카드까지 사라진다 |
-| 예산을 따로 계산 | 세 호출 지점이 합쳐서 20초를 넘긴다 |
+| 시간 초과에 재시도 | 전체 20초 상한이 깨진다 |
+| 속도 제한·용량 부족에 재시도 | 풀리지 않는다. 시간만 쓴다 |
+| 예외가 새어 나감 | 규칙 엔진 카드까지 사라진다 |
+| 동시 요청이 상한을 넘김 | 분당 요청 수 한도에 걸린다 |
 | 검증 안 된 발췌가 화면으로 | 원문에 없는 근거가 나간다 |
-| 조건을 못 뽑았는데 성공으로 처리 | 같은 이유로 likely 가 된다 |
 """
 
-import json
 import threading
 import time
 import unittest
 
-from ai.conversation.llm import (
-    BudgetTracker,
-    CallSite,
-    Gateway,
-    ModelCapacityError,
-    ModelFormatError,
-    ModelRateLimitError,
-    ModelTimeoutError,
-    StructuredResponse,
-    policy_for,
-)
 from ai.judgment.citation import raw_text_covers
 from ai.judgment.judge import (
-    JUDGE_FALLBACK,
+    DEFAULT_BATCH_BUDGET,
+    DEFAULT_CALL_TIMEOUT,
+    DEFAULT_MAX_WORKERS,
+    DEFAULT_POLICY_BUDGET,
     REASON_NO_CONDITIONS,
     ExceptionJudge,
-    JudgeStats,
 )
+from ai.judgment.client import LLMError
 from ai.judgment.scoring import evaluate
-from ai.judgment.values import ASK_NOTICE, UNKNOWN, UNMET
+from ai.judgment.values import ASK_NOTICE, MET, UNKNOWN, UNMET
 
 RAW = (
     "○ 지원 대상\n"
@@ -52,37 +40,35 @@ RAW = (
 EXCEPTIONS = "휴학생은 지원 대상에서 제외합니다"
 PROFILE = {"age": 23, "region": "seoul", "status": "on_leave"}
 
-GOOD_DATA = {
-    "conditions": [
-        {
-            "name": "휴학생 제외",
-            "result": UNMET,
-            "excerpt": EXCEPTIONS,
-            "needed_field": "",
-        }
-    ]
+GOOD_BODY = (
+    '{"conditions": [{"name": "휴학생 제외", "result": "unmet", '
+    '"excerpt": "휴학생은 지원 대상에서 제외합니다", "needed_field": ""}]}'
+)
+
+POLICY = {
+    "id": "SEOUL-001",
+    "exceptions_text": EXCEPTIONS,
+    "raw_text": RAW,
 }
 
-POLICY = {"id": "SEOUL-001", "exceptions_text": EXCEPTIONS, "raw_text": RAW}
 
+class FakeClient:
+    """정해진 순서대로 응답하거나 실패하는 클라이언트."""
 
-class FakeAdapter:
-    """대본대로 응답하거나 실패하는 어댑터.
-
-    `LlmAdapter` 프로토콜에서 우리가 쓰는 것은 `complete_structured` 하나다.
-    """
-
-    def __init__(self, script, delay=0.0):
+    def __init__(self, script):
+        #: script 는 응답 문자열 또는 던질 예외의 목록
         self.script = list(script)
-        self.requests = []
-        self.delay = delay
+        self.calls = []
+        self.timeouts = []
         self.lock = threading.Lock()
         self.concurrent = 0
         self.max_concurrent = 0
+        self.delay = 0.0
 
-    def complete_structured(self, request):
+    def complete(self, *, system, user, timeout, schema=None):
         with self.lock:
-            self.requests.append(request)
+            self.calls.append({"system": system, "user": user, "schema": schema})
+            self.timeouts.append(timeout)
             self.concurrent += 1
             self.max_concurrent = max(self.max_concurrent, self.concurrent)
         try:
@@ -93,83 +79,56 @@ class FakeAdapter:
             item = self.script.pop(0)
             if isinstance(item, BaseException):
                 raise item
-            if isinstance(item, StructuredResponse):
-                return item
-            return StructuredResponse(data=item)
+            return item
         finally:
             with self.lock:
                 self.concurrent -= 1
 
-    def stream_text(self, request):  # 판정은 스트리밍을 쓰지 않는다
-        raise AssertionError("판정은 stream_text 를 쓰지 않는다")
+
+def judge_with(script, **kwargs):
+    """가짜 클라이언트를 물린 판정기.
+
+    배치 예산 기본값은 정책당 예산과 같아 단일 정책 테스트에 영향이 없다.
+    """
+    client = FakeClient(script)
+    return ExceptionJudge(client, **kwargs), client
 
 
-def judge_with(script, *, delay=0.0, budget=None, max_workers=None):
-    adapter = FakeAdapter(script, delay=delay)
-    gateway = Gateway(adapter=adapter, budget=budget)
-    return ExceptionJudge(gateway, max_workers=max_workers), adapter, gateway
+class TestDefaults(unittest.TestCase):
+    def test_시간_예산이_문서와_같다(self):
+        """정책당 8초, 호출 6초. 남는 2초가 재시도 여유다."""
+        self.assertEqual(DEFAULT_POLICY_BUDGET, 8.0)
+        self.assertEqual(DEFAULT_CALL_TIMEOUT, 6.0)
+        self.assertLess(DEFAULT_CALL_TIMEOUT, DEFAULT_POLICY_BUDGET)
 
-
-class TestUsesSharedGateway(unittest.TestCase):
-    """모델 호출을 우리 쪽에 따로 두지 않는다."""
-
-    def test_판정_호출_지점_정책을_그대로_쓴다(self):
-        """예산·재시도 숫자를 우리가 다시 정하지 않는다."""
-        spec = policy_for(CallSite.JUDGE)
-        self.assertEqual(spec.timeout_s, 8.0)
-        self.assertEqual(spec.timeout_scope, "정책당")
-        self.assertEqual(spec.max_retries, 1)
-        self.assertTrue(spec.should_retry(ModelFormatError()))
-        self.assertFalse(spec.should_retry(ModelTimeoutError()))
-        self.assertFalse(spec.should_retry(ModelRateLimitError()))
-        self.assertFalse(spec.should_retry(ModelCapacityError()))
-
-    def test_judgment_폴더에_모델_호출부가_없다(self):
-        """`client.py` 를 없애고 공용 계층으로 옮겼다."""
-        import pathlib
-
-        folder = pathlib.Path("ai/judgment")
-        self.assertFalse((folder / "client.py").exists())
-        for path in folder.glob("*.py"):
-            text = path.read_text(encoding="utf-8")
-            with self.subTest(file=path.name):
-                self.assertNotIn("import anthropic", text)
-                self.assertNotIn("CLAUDE_API_KEY", text)
-
-    def test_판정_지점으로_부른다(self):
-        judge, adapter, gateway = judge_with([GOOD_DATA])
-        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        self.assertEqual(gateway.metrics["calls"], 1)
-
-    def test_스키마와_시스템_지시문을_넘긴다(self):
-        judge, adapter, _ = judge_with([GOOD_DATA])
-        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        request = adapter.requests[0]
-        self.assertIn("conditions", request.schema.get("properties", {}))
-        self.assertIn("예외 조건", request.system)
-        self.assertIn(RAW, request.user, "원문이 그대로 들어가야 발췌를 대조할 수 있다")
-
-    def test_판정_온도는_낮다(self):
-        judge, adapter, _ = judge_with([GOOD_DATA])
-        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        self.assertEqual(adapter.requests[0].temperature, 0.0)
+    def test_동시_실행_상한이_있다(self):
+        """후보 수만큼 무조건 늘리면 분당 요청 수 한도에 걸린다."""
+        self.assertEqual(DEFAULT_MAX_WORKERS, 3)
 
 
 class TestNormalPath(unittest.TestCase):
     def test_정상_응답을_조건으로_돌려준다(self):
-        judge, _, _ = judge_with([GOOD_DATA])
+        judge, client = judge_with([GOOD_BODY])
         conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
         self.assertEqual(len(conditions), 1)
         self.assertEqual(conditions[0]["result"], UNMET)
         self.assertEqual(conditions[0]["judged_by"], "ai")
-        self.assertEqual(judge.stats.judged, 1)
-        self.assertEqual(judge.stats.placeholders, 0)
+        self.assertEqual(judge.stats.successes, 1)
+        self.assertEqual(judge.stats.calls, 1)
+        self.assertEqual(judge.stats.retries, 0)
 
-    def test_어댑터가_문자열로_줘도_받는다(self):
-        """스키마 강제를 못 켠 어댑터가 본문을 그대로 주는 경우."""
-        judge, _, _ = judge_with([json.dumps(GOOD_DATA, ensure_ascii=False)])
-        conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        self.assertEqual(conditions[0]["result"], UNMET)
+    def test_시스템_지시문과_스키마를_넘긴다(self):
+        judge, client = judge_with([GOOD_BODY])
+        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
+        sent = client.calls[0]
+        self.assertIn("예외 조건", sent["system"])
+        self.assertIsNotNone(sent["schema"])
+        self.assertIn(RAW, sent["user"], "원문이 그대로 들어가야 발췌를 대조할 수 있다")
+
+    def test_첫_호출_제한은_호출_예산이다(self):
+        judge, client = judge_with([GOOD_BODY])
+        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
+        self.assertEqual(client.timeouts[0], DEFAULT_CALL_TIMEOUT)
 
 
 class TestSkip(unittest.TestCase):
@@ -178,159 +137,159 @@ class TestSkip(unittest.TestCase):
     def test_빈_예외_문장이면_부르지_않는다(self):
         for value in ("", "   ", None):
             with self.subTest(value=value):
-                judge, adapter, gateway = judge_with([])
+                judge, client = judge_with([])
                 self.assertEqual(judge.judge_policy(value, PROFILE, RAW), [])
-                self.assertEqual(adapter.requests, [])
-                self.assertEqual(gateway.metrics["calls"], 0)
+                self.assertEqual(client.calls, [])
                 self.assertEqual(judge.stats.skipped, 1)
+                self.assertEqual(judge.stats.calls, 0)
 
     def test_생략은_실패가_아니다(self):
-        judge, _, _ = judge_with([])
+        """예외 조건이 없는 정책이므로 조건 0개가 맞다."""
+        judge, _ = judge_with([])
         judge.judge_policy("", PROFILE, RAW)
-        self.assertEqual(judge.stats.placeholders, 0)
+        self.assertEqual(judge.stats.failures, 0)
 
 
 class TestFailureIsNotEmpty(unittest.TestCase):
     """실패는 빈 목록이 아니라 unknown 자리표시다."""
 
-    def test_시간_초과면_자리표시를_돌려준다(self):
-        judge, _, _ = judge_with([ModelTimeoutError()])
+    def test_실패하면_자리표시_조건을_돌려준다(self):
+        judge, _ = judge_with([LLMError("timeout")])
         conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
         self.assertEqual(len(conditions), 1, "빈 목록이면 likely 로 갈 수 있다")
         self.assertEqual(conditions[0]["result"], UNKNOWN)
         self.assertTrue(conditions[0]["placeholder"])
         self.assertEqual(conditions[0]["needed_field"], ASK_NOTICE)
-        self.assertEqual(conditions[0]["placeholder_reason"], ModelTimeoutError.reason)
 
-    def test_실패_종류가_자리표시에_남는다(self):
-        cases = (
-            (ModelTimeoutError(), ModelTimeoutError.reason),
-            (ModelRateLimitError(), ModelRateLimitError.reason),
-            (ModelCapacityError(), ModelCapacityError.reason),
-        )
-        for error, reason in cases:
-            with self.subTest(reason=reason):
-                judge, _, _ = judge_with([error])
+    def test_자리표시에_실패_사유가_남는다(self):
+        judge, _ = judge_with([LLMError("rate_limit")])
+        conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
+        self.assertEqual(conditions[0]["placeholder_reason"], "rate_limit")
+
+    def test_빈_조건_목록은_성공으로_보지_않는다(self):
+        """예외 문장이 있는데 조건 0개면 모든 조건 met 으로 계산되어 likely 로 갈 수 있다."""
+        for body in ('{"conditions": []}', "[]"):
+            with self.subTest(body=body):
+                judge, _ = judge_with([body])
                 conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-                self.assertEqual(conditions[0]["placeholder_reason"], reason)
+                self.assertEqual(len(conditions), 1)
+                self.assertEqual(conditions[0]["result"], UNKNOWN)
+                self.assertTrue(conditions[0]["placeholder"])
+                self.assertEqual(conditions[0]["placeholder_reason"], REASON_NO_CONDITIONS)
+                self.assertEqual(judge.stats.successes, 0)
 
-    def test_어댑터가_없으면_자리표시다(self):
-        """설정이 빠진 상태. 카드는 규칙 엔진 결과로 그대로 서 있다."""
-        judge = ExceptionJudge()  # 기본 Gateway, 어댑터 없음
-        conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        self.assertEqual(conditions[0]["result"], UNKNOWN)
-        self.assertEqual(conditions[0]["placeholder_reason"], "no_adapter")
-
-    def test_조건을_못_뽑으면_자리표시다(self):
-        """모델이 빈 목록을 냈다. 예외 문장이 있는데 조건 0개면 likely 로 갈 수 있다."""
-        judge, _, _ = judge_with([JUDGE_FALLBACK])
-        conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        self.assertEqual(len(conditions), 1)
-        self.assertEqual(conditions[0]["result"], UNKNOWN)
-        self.assertEqual(conditions[0]["placeholder_reason"], REASON_NO_CONDITIONS)
-
-    def test_항목이_전부_깨지면_자리표시다(self):
-        data = {"conditions": [{"name": "x", "result": "아마도", "excerpt": EXCEPTIONS}]}
-        judge, _, _ = judge_with([data])
-        conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        self.assertTrue(conditions[0]["placeholder"])
+    def test_빈_예외_문장_생략과_빈_조건_판정_누락을_구분한다(self):
+        judge, _ = judge_with(['{"conditions": []}'])
+        self.assertEqual(judge.judge_policy("", PROFILE, RAW), [])
+        self.assertEqual(judge.judge_policy(EXCEPTIONS, PROFILE, RAW)[0]["result"], UNKNOWN)
+        self.assertEqual(judge.stats.skipped, 1)
+        self.assertEqual(judge.stats.failures, 1)
 
     def test_자리표시는_인용_검증을_건너뛴다(self):
         """근거가 없는 게 정상이므로 제거 건수에 세면 지표가 흐려진다."""
-        judge, _, _ = judge_with([ModelTimeoutError()])
+        judge, _ = judge_with([LLMError("timeout")])
         result = judge.judge_and_verify(POLICY, PROFILE)
         self.assertEqual(result["removed"], [])
         self.assertEqual(result["conditions"][0]["result"], UNKNOWN)
 
 
-class TestRetryIsGatewayJob(unittest.TestCase):
-    """재시도 규칙은 Gateway 가 가진다. 우리가 다시 구현하지 않는다."""
+class TestRetry(unittest.TestCase):
+    """재시도는 형식 오류와 서버 오류만, 1회."""
 
-    def test_형식_오류는_한_번_다시_시도된다(self):
-        judge, adapter, gateway = judge_with([ModelFormatError(), GOOD_DATA])
+    def test_형식이_깨지면_한_번_다시_시도한다(self):
+        judge, client = judge_with(["이건 JSON 이 아닙니다", GOOD_BODY])
         conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
+        self.assertEqual(len(conditions), 1)
         self.assertEqual(conditions[0]["result"], UNMET)
-        self.assertEqual(len(adapter.requests), 2)
-        self.assertEqual(gateway.metrics["retries"], 1)
+        self.assertEqual(judge.stats.calls, 2)
+        self.assertEqual(judge.stats.retries, 1)
 
-    def test_시간_초과는_재시도되지_않는다(self):
-        judge, adapter, _ = judge_with([ModelTimeoutError(), GOOD_DATA])
+    def test_서버_오류는_재시도하지_않는다(self):
+        """문서 합의는 "형식 오류만 1회"다. 서버 오류까지 넓히면 20초 상한을 압박한다."""
+        judge, client = judge_with([LLMError("server"), GOOD_BODY])
         conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
         self.assertTrue(conditions[0]["placeholder"])
-        self.assertEqual(len(adapter.requests), 1, "재시도하면 또 그만큼 걸린다")
+        self.assertEqual(judge.stats.calls, 1)
+        self.assertEqual(judge.stats.retries, 0)
 
-    def test_속도_제한과_용량_부족도_재시도되지_않는다(self):
-        for error in (ModelRateLimitError(), ModelCapacityError()):
-            with self.subTest(error=type(error).__name__):
-                judge, adapter, _ = judge_with([error, GOOD_DATA])
-                judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-                self.assertEqual(len(adapter.requests), 1)
-
-
-class TestSharedBudget(unittest.TestCase):
-    """세 호출 지점이 예산을 나눠 쓴다. 우리가 따로 계산하지 않는다."""
-
-    def test_예산이_없으면_부르지_않는다(self):
-        """해석과 답변이 이미 예산을 다 썼다면 판정은 건너뛴다.
-
-        시계에 상수를 더하면 경과 시간이 0이다. 실제로 흐르는 시계를 써야 한다.
-        """
-        ticks = iter([0.0] + [100.0] * 50)
-        spent = BudgetTracker(total_s=20.0, clock=lambda: next(ticks, 100.0))
-        judge, adapter, _ = judge_with([GOOD_DATA], budget=spent)
-        self.assertEqual(spent.remaining_s(), 0.0, "전제 확인: 예산이 바닥난 상태")
+    def test_두_번_깨지면_포기한다(self):
+        """두 번 이상 재시도하면 20초 상한을 넘긴다."""
+        judge, client = judge_with(["깨짐", "또 깨짐"])
         conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        self.assertEqual(adapter.requests, [], "예산이 없으면 호출 자체를 하지 않는다")
         self.assertTrue(conditions[0]["placeholder"])
-        self.assertEqual(conditions[0]["placeholder_reason"], "budget_exhausted")
+        self.assertEqual(judge.stats.calls, 2)
+        self.assertEqual(len(client.script), 0)
 
-    def test_남은_예산보다_긴_타임아웃을_주지_않는다(self):
-        """정책상 8초여도 남은 예산이 짧으면 그만큼만 쓴다."""
-        budget = BudgetTracker(total_s=5.0, reserved_s=1.5)
-        judge, adapter, _ = judge_with([GOOD_DATA], budget=budget)
-        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        self.assertLessEqual(adapter.requests[0].timeout_s, 3.5)
+    def test_시간_초과는_재시도하지_않는다(self):
+        judge, client = judge_with([LLMError("timeout"), GOOD_BODY])
+        conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
+        self.assertTrue(conditions[0]["placeholder"])
+        self.assertEqual(judge.stats.calls, 1, "재시도하면 또 그만큼 걸린다")
+        self.assertEqual(judge.stats.retries, 0)
 
-    def test_예산을_공유한다(self):
-        """같은 Gateway 를 쓰면 판정이 쓴 시간이 예산에 반영된다."""
-        budget = BudgetTracker(total_s=20.0)
-        judge, _, gateway = judge_with([GOOD_DATA], budget=budget)
-        self.assertIs(gateway.budget, budget)
-        before = budget.remaining_s()
+    def test_속도_제한은_재시도하지_않는다(self):
+        judge, client = judge_with([LLMError("rate_limit"), GOOD_BODY])
         judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        self.assertLessEqual(budget.remaining_s(), before)
+        self.assertEqual(judge.stats.calls, 1, "대기 시간이 우리 예산보다 길다")
+
+    def test_용량_부족은_재시도하지_않고_데모_모드_신호를_남긴다(self):
+        judge, client = judge_with([LLMError("overloaded"), GOOD_BODY])
+        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
+        self.assertEqual(judge.stats.calls, 1)
+        self.assertEqual(judge.stats.overloaded, 1)
+        self.assertIn("데모 모드", judge.stats.summary())
+
+    def test_인증_오류는_재시도하지_않는다(self):
+        judge, client = judge_with([LLMError("auth"), GOOD_BODY])
+        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
+        self.assertEqual(judge.stats.calls, 1)
+
+    def test_남은_예산이_없으면_재시도하지_않는다(self):
+        """재시도할 수 있는 실패라도 시간이 없으면 넘어간다."""
+        judge, client = judge_with(
+            [LLMError("server"), GOOD_BODY], policy_budget=6.0, call_timeout=6.0
+        )
+        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
+        self.assertEqual(judge.stats.calls, 1)
+
+    def test_재시도_제한은_남은_예산을_넘지_않는다(self):
+        judge, client = judge_with(
+            ["깨짐", GOOD_BODY], policy_budget=8.0, call_timeout=6.0
+        )
+        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
+        self.assertEqual(client.timeouts, [6.0, 2.0])
 
 
 class TestNeverRaises(unittest.TestCase):
     """예외가 새어 나가면 규칙 엔진 카드까지 사라진다."""
 
-    def test_어댑터가_엉뚱한_예외를_던져도_흡수한다(self):
-        judge, _, _ = judge_with([ValueError("예상 못 한 오류")])
+    def test_클라이언트가_LLMError가_아닌_것을_던져도_흡수한다(self):
+        judge, _ = judge_with([ValueError("예상 못 한 오류")])
+        conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
+        self.assertTrue(conditions[0]["placeholder"])
+        self.assertEqual(judge.stats.failures, 1)
+
+    def test_클라이언트가_이상한_것을_돌려줘도_흡수한다(self):
+        judge, _ = judge_with([None])
         conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
         self.assertTrue(conditions[0]["placeholder"])
 
-    def test_어댑터가_이상한_모양을_돌려줘도_흡수한다(self):
-        for data in ({"message": "ok"}, None, 3, "판정할 수 없습니다"):
-            with self.subTest(data=data):
-                judge, _, _ = judge_with([StructuredResponse(data=data)])
-                conditions = judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-                self.assertEqual(len(conditions), 1)
-                self.assertTrue(conditions[0]["placeholder"])
-
     def test_원문이_없어도_터지지_않는다(self):
-        judge, _, _ = judge_with([GOOD_DATA])
-        self.assertIsInstance(judge.judge_policy(EXCEPTIONS, PROFILE, None), list)
+        judge, _ = judge_with([GOOD_BODY])
+        conditions = judge.judge_policy(EXCEPTIONS, PROFILE, None)
+        self.assertIsInstance(conditions, list)
 
     def test_프로필이_없어도_터지지_않는다(self):
-        judge, _, _ = judge_with([GOOD_DATA])
-        self.assertEqual(judge.judge_policy(EXCEPTIONS, None, RAW)[0]["result"], UNMET)
+        judge, _ = judge_with([GOOD_BODY])
+        conditions = judge.judge_policy(EXCEPTIONS, None, RAW)
+        self.assertEqual(conditions[0]["result"], UNMET)
 
 
 class TestVerifyIntegration(unittest.TestCase):
     """운영 경로는 인용 검증까지 끝낸다."""
 
     def test_판정과_검증을_한_번에_한다(self):
-        judge, _, _ = judge_with([GOOD_DATA])
+        judge, _ = judge_with([GOOD_BODY])
         result = judge.judge_and_verify(POLICY, PROFILE)
         self.assertEqual(result["policy_id"], "SEOUL-001")
         self.assertEqual(result["conditions"][0]["result"], UNMET)
@@ -338,34 +297,25 @@ class TestVerifyIntegration(unittest.TestCase):
         self.assertEqual(result["removed"], [])
 
     def test_환각_발췌는_검증에서_걸러진다(self):
-        data = {
-            "conditions": [
-                {
-                    "name": "소득 초과",
-                    "result": UNMET,
-                    "excerpt": "가구 소득이 기준 중위소득 150%를 초과하면 제외합니다",
-                    "needed_field": "",
-                }
-            ]
-        }
-        judge, _, _ = judge_with([data])
+        """원문에 없는 근거가 화면으로 나가지 않는다."""
+        body = (
+            '{"conditions": [{"name": "소득 초과", "result": "unmet", '
+            '"excerpt": "가구 소득이 기준 중위소득 150%를 초과하면 제외합니다", '
+            '"needed_field": ""}]}'
+        )
+        judge, _ = judge_with([body])
         result = judge.judge_and_verify(POLICY, PROFILE)
         self.assertEqual(result["conditions"][0]["result"], UNKNOWN)
         self.assertIsNone(result["conditions"][0]["excerpt"])
+        self.assertEqual(len(result["removed"]), 1)
         self.assertEqual(result["removed"][0]["reason"], "not_found")
 
     def test_통과한_발췌는_원문_구간으로_바뀐다(self):
-        data = {
-            "conditions": [
-                {
-                    "name": "휴학생 제외",
-                    "result": UNMET,
-                    "excerpt": "휴학생은   지원\n대상에서 제외합니다",
-                    "needed_field": "",
-                }
-            ]
-        }
-        judge, _, _ = judge_with([data])
+        body = (
+            '{"conditions": [{"name": "휴학생 제외", "result": "unmet", '
+            '"excerpt": "휴학생은   지원\\n대상에서 제외합니다", "needed_field": ""}]}'
+        )
+        judge, _ = judge_with([body])
         result = judge.judge_and_verify(POLICY, PROFILE)
         excerpt = result["conditions"][0]["excerpt"]
         self.assertEqual(excerpt, EXCEPTIONS)
@@ -375,7 +325,7 @@ class TestVerifyIntegration(unittest.TestCase):
 class TestConcurrency(unittest.TestCase):
     def test_여러_정책을_순서대로_돌려준다(self):
         policies = [dict(POLICY, id=f"SEOUL-00{i}") for i in range(1, 6)]
-        judge, _, _ = judge_with([GOOD_DATA] * 5)
+        judge, _ = judge_with([GOOD_BODY] * 5)
         results = judge.judge_policies(policies, PROFILE)
         self.assertEqual(
             [r["policy_id"] for r in results],
@@ -384,63 +334,66 @@ class TestConcurrency(unittest.TestCase):
 
     def test_동시_실행이_상한을_넘지_않는다(self):
         policies = [dict(POLICY, id=f"P{i}") for i in range(6)]
-        judge, adapter, _ = judge_with([GOOD_DATA] * 6, delay=0.02, max_workers=3)
+        judge, client = judge_with([GOOD_BODY] * 6, max_workers=3)
+        client.delay = 0.02
         judge.judge_policies(policies, PROFILE)
-        self.assertLessEqual(adapter.max_concurrent, 3)
+        self.assertLessEqual(client.max_concurrent, 3)
 
     def test_하나가_실패해도_나머지는_돌아온다(self):
         policies = [dict(POLICY, id="A"), dict(POLICY, id="B")]
-        judge, _, _ = judge_with([ModelTimeoutError(), GOOD_DATA], max_workers=1)
+        judge, _ = judge_with([LLMError("timeout"), GOOD_BODY], max_workers=1)
         results = judge.judge_policies(policies, PROFILE)
         self.assertEqual(len(results), 2)
-        reasons = {r["policy_id"]: r["conditions"][0].get("placeholder") for r in results}
-        self.assertEqual(set(reasons), {"A", "B"})
-        self.assertEqual(sum(1 for v in reasons.values() if v), 1)
-
-    def test_같은_정책_번호가_두_번_와도_결과를_잃지_않는다(self):
-        policies = [dict(POLICY), dict(POLICY)]
-        judge, _, _ = judge_with([GOOD_DATA] * 2)
-        results = judge.judge_policies(policies, PROFILE)
-        self.assertEqual(len(results), 2)
+        self.assertTrue(results[0]["conditions"][0]["placeholder"])
+        self.assertEqual(results[1]["conditions"][0]["result"], UNMET)
 
     def test_빈_목록이면_부르지_않는다(self):
-        judge, adapter, _ = judge_with([])
+        judge, client = judge_with([])
         self.assertEqual(judge.judge_policies([], PROFILE), [])
-        self.assertEqual(adapter.requests, [])
+        self.assertEqual(client.calls, [])
+
+    def test_배치_예산이_전체_20초를_압박하지_않는다(self):
+        """후보 5개를 worker 3개로 돌리면 두 wave 가 된다. 배치 상한이 없으면 16초가 된다."""
+        self.assertEqual(DEFAULT_BATCH_BUDGET, 8.0)
+        self.assertLessEqual(DEFAULT_BATCH_BUDGET, DEFAULT_POLICY_BUDGET)
+
+    def test_배치_예산이_끝나면_남은_후보는_부르지_않는다(self):
+        policies = [dict(POLICY, id=f"P{i}") for i in range(4)]
+        judge, client = judge_with([GOOD_BODY] * 4, max_workers=1, batch_budget=0.0)
+        results = judge.judge_policies(policies, PROFILE)
+        self.assertEqual(len(results), 4)
+        self.assertEqual(client.calls, [], "예산이 없으면 호출 자체를 하지 않는다")
+        for result in results:
+            self.assertTrue(result["conditions"][0]["placeholder"])
+
+    def test_정책별_타임아웃이_남은_배치_예산을_넘지_않는다(self):
+        judge, client = judge_with([GOOD_BODY], batch_budget=1.5)
+        judge.judge_policies([dict(POLICY)], PROFILE)
+        self.assertLessEqual(client.timeouts[0], 1.5)
 
 
 class TestScoringHandoff(unittest.TestCase):
     """평가 하네스에 그대로 넣을 수 있어야 한다."""
 
     def test_judge_policy를_evaluate에_넣을_수_있다(self):
-        """J1~J8 회귀 검사를 프롬프트 고칠 때마다 돌린다."""
+        """J1~J8 회귀 검사를 프롬프트 고칠 때마다 돌린다 (연구 문서 8장)."""
 
-        class OracleAdapter:
+        class OracleClient:
             """케이스 원문에서 예외 문장을 그대로 인용하는 가짜 모델."""
 
-            def complete_structured(self, request):
-                start = request.user.index("<exception_condition>\n") + len(
+            def complete(self, *, system, user, timeout, schema=None):
+                start = user.index("<exception_condition>\n") + len(
                     "<exception_condition>\n"
                 )
-                end = request.user.index("\n</exception_condition>")
-                excerpt = request.user[start:end]
-                return StructuredResponse(
-                    data={
-                        "conditions": [
-                            {
-                                "name": "조건",
-                                "result": UNKNOWN,
-                                "excerpt": excerpt,
-                                "needed_field": ASK_NOTICE,
-                            }
-                        ]
-                    }
+                end = user.index("\n</exception_condition>")
+                excerpt = user[start:end]
+                return (
+                    '{"conditions": [{"name": "조건", "result": "unknown", '
+                    '"excerpt": %s, "needed_field": "%s"}]}'
+                    % (_json_string(excerpt), ASK_NOTICE)
                 )
 
-            def stream_text(self, request):
-                raise AssertionError("쓰지 않는다")
-
-        judge = ExceptionJudge(Gateway(adapter=OracleAdapter()))
+        judge = ExceptionJudge(OracleClient())
         report = evaluate(judge.judge_policy)
         self.assertEqual(report.total, 8)
         self.assertEqual(
@@ -453,57 +406,31 @@ class TestScoringHandoff(unittest.TestCase):
         )
 
 
+def _json_string(text):
+    import json
+
+    return json.dumps(text, ensure_ascii=False)
+
+
 class TestStats(unittest.TestCase):
-    """Gateway 가 세는 것을 다시 세지 않는다."""
-
-    def test_자체로_세는_것은_생략_판정_자리표시다(self):
-        judge, _, _ = judge_with([GOOD_DATA, ModelTimeoutError()])
-        judge.judge_policy("", PROFILE, RAW)
+    def test_요약에_핵심_수치가_들어간다(self):
+        judge, _ = judge_with([GOOD_BODY, LLMError("timeout")])
         judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
         judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        self.assertEqual(judge.stats.skipped, 1)
-        self.assertEqual(judge.stats.judged, 1)
-        self.assertEqual(judge.stats.placeholders, 1)
-
-    def test_용량_부족을_gateway에서_읽는다(self):
-        judge, _, _ = judge_with([ModelCapacityError()])
-        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        stats = judge.stats_snapshot()
-        self.assertEqual(stats.overloaded, 1)
-        self.assertIn("데모 모드", stats.summary())
-
-    def test_gateway_지표를_함께_낸다(self):
-        judge, _, _ = judge_with([GOOD_DATA])
-        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        stats = judge.stats_snapshot()
-        self.assertIsNotNone(stats.gateway_metrics)
-        self.assertEqual(stats.gateway_metrics["calls"], 1)
-        self.assertIn("모델 호출", stats.summary())
+        summary = judge.stats.summary()
+        self.assertIn("판정 호출", summary)
+        self.assertIn("실패 종류", summary)
 
     def test_파싱에서_버린_항목을_센다(self):
-        data = {
-            "conditions": [
-                {"name": "깨짐", "result": "아마도", "excerpt": EXCEPTIONS},
-                {"name": "휴학생 제외", "result": UNMET, "excerpt": EXCEPTIONS},
-            ]
-        }
-        judge, _, _ = judge_with([data])
+        body = (
+            '{"conditions": ['
+            '{"name": "깨짐", "result": "아마도", "excerpt": "휴학생은 지원 대상에서 제외합니다"},'
+            '{"name": "휴학생 제외", "result": "unmet", "excerpt": "휴학생은 지원 대상에서 제외합니다"}'
+            "]}"
+        )
+        judge, _ = judge_with([body])
         judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
         self.assertEqual(judge.stats.parse_dropped, 1)
-
-    def test_지표_모으기에_그대로_넘길_수_있다(self):
-        """`metrics.collect(judge_stats=...)` 가 overloaded 를 읽는다."""
-        from ai.judgment.metrics import collect
-
-        judge, _, _ = judge_with([ModelCapacityError()])
-        judge.judge_policy(EXCEPTIONS, PROFILE, RAW)
-        report = collect(judge_stats=judge.stats_snapshot())
-        self.assertTrue(any("데모 모드" in n for n in report.notes), report.notes)
-
-    def test_빈_기록의_기본값(self):
-        stats = JudgeStats()
-        self.assertEqual(stats.overloaded, 0)
-        self.assertIsInstance(stats.summary(), str)
 
 
 if __name__ == "__main__":

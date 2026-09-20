@@ -289,7 +289,7 @@ print(report.to_slide())
 | 커버리지 | 검수된 20~30건뿐. 전국 실시간 수집이 아니다 |
 | 판정의 성격 | 최종 자격 판정이 아니다. 신청 가능성과 근거를 보여줄 뿐이다 |
 | 설문 | 29명 편의표집. 비율을 시장 전체로 일반화하지 않는다 |
-| 데이터 갱신 | 수동 검수가 기본이다. 필요할 때만 공식 출처 대상의 최소 크롤링을 사용하며, 전국 실시간 수집은 하지 않는다. 확인일로부터 14일이 지나면 재확인 필요로 표시한다 |
+| 데이터 갱신 | 데모는 수동 검수본만 쓴다. 크롤링 산출물도 사람 검수 전에는 결과에서 제외하며, 확인일로부터 14일이 지나면 재확인 필요로 표시한다 |
 | 접근성 | 기준을 지켰지만 보조기술 수동 테스트와 전문가 검토는 하지 못했다 |
 
 한계를 먼저 말하는 쪽이 질의응답에서 유리하다. 심사위원이 먼저 지적하면 방어가 되고, 우리가 먼저 말하면 판단으로 보인다.
@@ -322,13 +322,16 @@ print(report.to_slide())
 | `checklist.py` | 공고 원문에서 서류·신청 단계 추출 | 8 |
 | `prompt.py` | 판정 프롬프트 조립. 문자열만 만든다 | 3~5 |
 | `schema.py` | 출력 스키마와 방어적 파싱 | 5 |
-| `judge.py` | 판정 오케스트레이션. 모델 호출은 공용 `Gateway` 로 | 9 |
+| `client.py` | **모델 호출은 여기서만 한다** | 9 |
+| `judge.py` | 판정 오케스트레이션 (시간 예산, 재시도, 실패 흡수) | 9 |
 | `cases.py` | 판정 평가 케이스 J1~J8 | 10 |
 | `scoring.py` | 판정 평가 채점 | 10, 12 |
 | `grounding.py` | 근거 없는 조건 자동 검출 | 11 |
 | `grounding-checklist.md` | 사람이 채우는 점검 양식 | 11 |
 | `metrics.py` | 지표를 슬라이드 한 장으로 모으기 | 12 |
 | `metrics-slide.md` | 숫자만 채우면 되는 슬라이드 틀 | 12 |
+| `integration.py` | 내부 조건을 API 조건 모양으로 변환 | 5~6 |
+| `readiness.py` | 키·모델·SDK·평가 데이터 준비 상태 점검 | 13 |
 
 ### 쓰는 방법
 
@@ -339,11 +342,35 @@ from ai.judgment import ExceptionJudge
 
 judge = ExceptionJudge()
 result = judge.judge_and_verify(policy, profile)
-# result["conditions"]  검증 통과한 조건. 발췌는 원문에서 되찾은 구간
+# result["conditions"]  인용 검증을 수행한 **내부** 조건 목록.
+#                       통과한 조건의 발췌는 원문에서 되찾은 구간이고,
+#                       실패·자리표시 조건도 unknown 으로 남아 있다 (상태 계산용)
 # result["removed"]     제거된 발췌 기록 (지표용)
 
 results = judge.judge_policies(candidate_policies, profile)  # 동시 실행, 상한 3
 ```
+
+`result["conditions"]`는 **내부 목록이다.** 정책 상태 계산을 위해 자리표시·검증 실패 조건이 `unknown` 으로 남아 있다. API 응답에는 그대로 넣지 않는다. 인용 검증을 통과한 조건만 공개 형태로 바꾼다.
+
+**규칙 조건과 AI 조건을 최종 병합한 목록**을 넘긴다. 함수가 API 계약 순서(`unmet → unknown → met`)로 정렬한 뒤 각주 번호를 한 번만 붙인다. 병합 전에 각주를 붙이면 화면 순서와 AI A 각주 매핑이 어긋난다.
+
+```python
+from ai.judgment.integration import public_conditions
+
+batch = public_conditions(
+    result["conditions"],
+    source_url=policy["source_url"],
+    start_footnote_id=1,
+    raw_text=policy["raw_text"],   # 요약의 지어낸 숫자까지 막는다
+)
+# batch.conditions       API ConditionEvaluation 필드만 있음
+# batch.next_footnote_id 다음 정책이 이어서 쓸 각주 번호
+# batch.hidden_count     상태 계산에는 남지만 화면에서 숨긴 조건 수
+```
+
+이 경계가 필요한 이유는 내부 자리표시가 `name=""`, `excerpt=None`인 반면 서버의 `ConditionEvaluation`은 이름 1자 이상과 출처·각주 번호를 요구하기 때문이다. 상태 계산에는 내부 조건을 쓰고, 화면에는 `batch.conditions`만 쓴다.
+
+값도 서버 계약에 맞는 것만 통과시킨다. `judged_by`는 `rule`·`ai`, `needed_field`는 추가 항목 이름이나 "공고 확인 필요", `source_url`은 http(s), 발췌는 10~150자, 이름은 20자 이내다. 벗어나면 공개하지 않고 `batch.issues`에 기록한다. 서버에서 Pydantic 검증이 실패하면 응답 전체가 깨지므로, 경계에서 막는 쪽이 안전하다.
 
 평가는 `judge_policy` 를 하네스에 넘긴다. 프롬프트를 고칠 때마다 다시 돌린다.
 
@@ -353,33 +380,29 @@ report = evaluate(ExceptionJudge().judge_policy)
 print(report.summary())
 ```
 
-### 모델 호출은 이 폴더에 없다
+### 모델 설정
 
-`ai/conversation/llm.py` 의 `Gateway` 를 쓴다. 모델을 부르는 곳은 세 곳뿐이고(메시지 해석·예외 조건 판정·답변 작성) **그 셋이 전체 20초를 나눠 쓴다.** 호출부를 담당자별로 두면 각자 자기 시계를 봐서 합쳐 20초를 넘길 수 있고, 환경 변수와 모델 이름도 두 벌이 된다.
+**모델 이름을 코드에 박지 않는다.** 환경 변수로 넣는다 (`client.py` 상단 표 참고).
 
-`CALL_SITE_POLICIES[CallSite.JUDGE]` 에 우리 예산이 들어 있다.
+| 변수 | 기본값 | 비고 |
+| --- | --- | --- |
+| `CLAUDE_API_KEY` | 없음 (필수) | 각자 로컬 환경 변수에만. 커밋·채팅 공유 금지 |
+| `CLAUDE_MODEL` | 없음 (필수) | 캠프에서 받은 정확한 이름을 넣는다. 코드에 기본값을 두지 않는다 |
+| `CLAUDE_MAX_TOKENS` | 1024 | |
+| `CLAUDE_TEMPERATURE` | 0.0 | 판정이므로 낮게 |
 
-| 항목 | 값 |
-| --- | --- |
-| 타임아웃 | 정책당 8초 |
-| 출력 | 스키마 강제 |
-| 온도 | 0.0 |
-| 재시도 | 형식 오류만 1회 |
-| 폴백 | 그 정책의 예외 조건 전체를 미확인 |
-
-그래서 `judge.py` 는 재시도도 타임아웃도 직접 다루지 않는다. 결과를 조건 목록으로 바꾸고 실패를 자리표시로 흡수하는 일만 한다.
-
-`Gateway` 는 **턴마다 새로 만든 것**을 받는다. 예산 추적기를 공유하기 때문이다. 서버가 `/chat` 한 번에 하나를 만들어 해석·판정·답변에 같이 넘긴다. 넘기지 않으면 어댑터 없는 `Gateway` 로 동작하고 모든 정책이 `no_adapter` 자리표시로 떨어진다. 카드는 규칙 엔진 결과로 그대로 서 있다.
-
-모델 이름과 키는 `KMUCT_LLM_*` 환경 변수로 넣는다. 자세한 이름은 `ai/conversation/llm.py` 상단에 있다.
+의존성은 `anthropic` 하나다. **버전 고정은 백엔드B가 의존성 목록에서 한다.** `client.py` 는 지연 import 하므로 패키지가 없어도 이 폴더의 테스트는 전부 돌아간다.
 
 ### 확인 방법
 
 ```bash
+# 키·모델·SDK·평가 데이터 준비 상태 (값은 출력하지 않음)
+python3 -m ai.judgment.readiness
+
 # 평가 케이스 현황
 python3 -m ai.judgment
 
-# 테스트 (모델 패키지·키 없이도 전부 통과)
+# 테스트 (anthropic 패키지 없이도 전부 통과)
 python3 -m unittest discover -s tests -t .
 ```
 
