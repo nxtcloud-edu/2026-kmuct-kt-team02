@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # 조건 결과 (CONTRIBUTING 7-2)
@@ -158,6 +158,66 @@ VALUE_LABELS: Dict[str, Dict[str, str]] = {
     "household_size": {"1": "1인", "2": "2인", "3": "3인", "4_plus": "4인 이상"},
     "last_gpa": {"above": "기준 이상", "below": "기준 미만", "unknown": "모름"},
 }
+
+
+# ---------------------------------------------------------------------------
+# 조건부 문장의 조건절 문구 표
+#
+# "(항목)이 (값)이라면" 을 기계적으로 만들면 어색해진다.
+# 예: "다른 지원 수혜가 없음이라면", "남은 학기가 1학기라면"
+#
+# 그래서 항목·값 조합마다 읽히는 조건절을 표로 적어 둔다.
+# **AI 가 문장을 쓰는 것이 아니라 이 표에서 고른다.** 고정 형식 원칙은 그대로다
+# (`ai/judgment/README.md` 7장).
+#
+# 표에 없는 조합은 조사를 맞춘 기본 형태로 만든다. 문구가 빠져도 문장은 나온다.
+# ---------------------------------------------------------------------------
+
+EXTRA_CONDITION_CLAUSES: Dict[str, Dict[str, str]] = {
+    "housing_type": {
+        "parents": "부모님 집에 살고 있다면",
+        "monthly_rent": "월세로 살고 있다면",
+        "jeonse": "전세로 살고 있다면",
+        "dormitory": "기숙사에 살고 있다면",
+        "other": "그 밖의 주거 형태라면",
+    },
+    "residence_period": {
+        "under_6m": "서울에 산 지 6개월이 안 됐다면",
+        "6m_1y": "서울에 산 지 6개월에서 1년 사이라면",
+        "over_1y": "서울에 산 지 1년이 넘었다면",
+    },
+    "remaining_semesters": {
+        "one": "졸업까지 1학기 남았다면",
+        "two_plus": "졸업까지 2학기 이상 남았다면",
+    },
+    "job_seeking_period": {
+        "under_6m": "구직 활동을 시작한 지 6개월이 안 됐다면",
+        "over_6m": "구직 활동을 시작한 지 6개월이 넘었다면",
+    },
+    "employment_insurance": {
+        "yes": "고용보험에 가입한 적이 있다면",
+        "no": "고용보험에 가입한 적이 없다면",
+    },
+    "other_benefit": {
+        "yes": "다른 청년 지원금을 받고 있다면",
+        "no": "다른 청년 지원금을 받고 있지 않다면",
+    },
+    "household_size": {
+        "1": "혼자 살고 있다면",
+        "2": "가구원이 2인이라면",
+        "3": "가구원이 3인이라면",
+        "4_plus": "가구원이 4인 이상이라면",
+    },
+    "last_gpa": {
+        "above": "직전 학기 성적이 공고 기준 이상이라면",
+        "below": "직전 학기 성적이 공고 기준 미만이라면",
+    },
+}
+
+
+def extra_condition_clause(field: str, value: object) -> Optional[str]:
+    """조건절 문구. 표에 없으면 None (호출한 쪽이 기본 형태로 만든다)."""
+    return EXTRA_CONDITION_CLAUSES.get(field, {}).get(str(value))
 
 
 def field_label(field: str) -> str:

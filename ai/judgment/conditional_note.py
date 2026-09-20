@@ -15,10 +15,15 @@
 | 소득 | 가구 소득이 기준 중위소득 n% 이하라면 신청 가능해요 |
 | 추가 항목 | (항목)이 (값)이라면 신청 가능해요 |
 | 예외 조건 | (조건 요약)에 해당하지 않는다면 신청 가능해요 |
-| 미확인 2개 이상 | 가장 위의 하나만 문장으로, 나머지는 "외 n개 조건 확인 필요" |
+| 미확인 2개 이상 | 가장 위의 하나만 문장으로, 나머지 개수를 덧붙인다 |
 
 **형식에 값만 넣는다. AI 가 자유롭게 쓰지 않는다.**
 값을 채울 수 없으면 문장을 만들지 않고 비운다. 지어내지 않는다.
+
+추가 항목은 문구 표(`values.EXTRA_CONDITION_CLAUSES`)에서 조건절을 고른다.
+"(항목)이 (값)이라면" 을 기계적으로 만들면 "다른 지원 수혜가 없음이라면" 처럼
+어색해진다. 표에 없는 조합만 조사를 맞춘 기본 형태로 만든다.
+표에서 고르는 것이므로 고정 형식 원칙은 그대로다.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from ai.judgment.values import (
     EXTRA_FIELD_VALUES,
     UNKNOWN,
     UNMET,
+    extra_condition_clause,
     field_label,
     value_label,
 )
@@ -80,11 +86,31 @@ def income_phrase(income_max_pct: object) -> Optional[str]:
 
 
 def extra_field_phrase(field: str, required_value: object) -> Optional[str]:
-    """추가 항목 형태. 항목과 필요한 값을 둘 다 알아야 만든다."""
+    """추가 항목 형태. 항목과 필요한 값을 둘 다 알아야 만든다.
+
+    문구 표(`values.EXTRA_CONDITION_CLAUSES`)를 먼저 본다. 표에 있는 조합은
+    읽히는 문장이 나온다. 예: "다른 청년 지원금을 받고 있지 않다면 신청 가능해요"
+
+    표에 없는 조합은 조사를 맞춘 기본 형태로 만든다.
+    예: "(항목)이 (값)이라면 신청 가능해요"
+    기본 형태는 어색할 수 있지만, 문구가 빠져도 문장이 나오는 쪽이 낫다.
+    조건부 문장이 비면 카드에 상태 문구만 남는다.
+    """
     if field not in EXTRA_FIELD_VALUES:
         return None
     if required_value in (None, ""):
         return None
+
+    # 정책이 "모름"을 **필요한 값**으로 요구하는 일은 없다. 그런 값이 들어왔다면
+    # 정책 데이터 쪽 오류다. "직전 학기 성적이 모름이라면" 같은 말이 되지 않는
+    # 문장을 내보내는 것보다, 문장을 만들지 않고 다음 조건으로 넘기는 쪽이 낫다.
+    if str(required_value) == "unknown":
+        return None
+
+    clause = extra_condition_clause(field, required_value)
+    if clause:
+        return f"{clause}{_TAIL}"
+
     label = field_label(field)
     value = value_label(field, required_value)
     return f"{label}{_subject_particle(label)} {value}{_copula(value)}{_TAIL}"
@@ -186,5 +212,7 @@ def build_conditional_note(
 
     remaining = len(unknowns) - 1
     if remaining > 0:
-        return f"{phrase} 외 {remaining}개 조건 확인 필요"
+        # "신청 가능해요 외 n개 조건 확인 필요" 는 두 문장이 붙어 읽기 어렵다.
+        # 뜻은 같게 두고 괄호로 덧붙인다.
+        return f"{phrase} (확인할 조건 {remaining}개 더)"
     return phrase
