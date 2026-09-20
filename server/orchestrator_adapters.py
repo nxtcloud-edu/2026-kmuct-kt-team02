@@ -7,7 +7,7 @@ from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field, JsonValue, ValidationError
 
-from ai.citation import verify_conditions
+from ai.judgment.citation import verify_conditions
 from ai.conversation import answer as conversation_answer
 from ai.conversation import pipeline as conversation_pipeline
 from server.schemas import (
