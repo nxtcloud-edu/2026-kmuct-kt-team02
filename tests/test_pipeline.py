@@ -27,7 +27,7 @@ import re
 import unittest
 from unittest import mock
 
-from ai.conversation import answer, fields, followup, interpret, llm, pipeline, questions
+from ai.conversation import answer, fields, followup, interpret, llm, pipeline, prompts, questions
 
 # 서버가 부여한 각주 목록 (docs/03-api-contract.md 5장)을 줄여서 쓴다.
 FOOTNOTES = (
@@ -719,19 +719,60 @@ class TestBuildAnswerPromptWiring(unittest.TestCase):
             "길이 규칙 자리가 하나가 아니다",
         )
 
-    def test_규칙_블록에_네_가지_자리와_근거가_모두_있다(self):
-        """무엇이 들어갈 자리인지와 근거 문서를 적어 두는 것이 이 블록의 역할이다."""
+    def test_규칙_블록에_네_가지_자리와_문안이_모두_있다(self):
+        """네 항목이 자리와 **문안**을 함께 가져야 한다.
+
+        근거 문서 경로(``slot.doc_ref``)는 프롬프트에 넣지 않는다. 모델에게 저장소 경로는
+        무의미한 토큰이고, 최악의 경우 "README 를 확인하겠습니다" 같은 메타 응답을 부른다.
+        ``PROMPT_TODO`` 자리표시자가 실려 나갔을 때 실제로 그 일이 났다 — 모델이 빈 문안을
+        채워 주는 답변을 냈다. 근거를 사람이 찾을 수 있어야 한다는 요구는 아래
+        ``test_근거_문서는_코드에_남아_있다`` 가 지킨다. 코드를 읽으면 된다.
+        """
         rules = rules_block(self.prompt())
         for slot in pipeline.ANSWER_RULE_SLOTS:
             with self.subTest(slot=slot.id):
                 self.assertIn(f"[{slot.id}]", rules, f"{slot.id} 자리가 없다")
-                self.assertIn(slot.doc_ref, rules, f"{slot.id} 근거 문서가 없다")
+                text = prompts.rule_text(slot.id)
+                self.assertTrue(text, f"{slot.id} 문안이 비었다")
+                self.assertIn(
+                    text.splitlines()[0], rules, f"{slot.id} 문안이 프롬프트에 없다"
+                )
 
-    def test_프롬프트_문안은_아직_자리로_남아_있다(self):
+    def test_근거_문서는_코드에_남아_있다(self):
+        """프롬프트에서 뺐어도 사람이 근거를 찾을 수 있어야 한다."""
+        for slot in pipeline.ANSWER_RULE_SLOTS:
+            with self.subTest(slot=slot.id):
+                self.assertTrue(slot.doc_ref, f"{slot.id} 근거 문서가 비었다")
+
+    def test_저장소_경로가_프롬프트에_새지_않는다(self):
+        """모델에게 파일 경로를 주면 그것을 읽으려 하거나 언급한다."""
+        prompt = self.prompt()
+        for needle in (".md", "docs/", "ai/conversation/"):
+            with self.subTest(needle=needle):
+                self.assertNotIn(needle, prompt.user, f"프롬프트에 {needle} 가 있다")
+
+    def test_자리표시자가_프롬프트에_남지_않는다(self):
         """문안을 여기서 지어내면 검토 없이 데모에 들어간다. 지금은 비어 있어야 정상이다."""
         prompt = self.prompt()
-        self.assertIn(pipeline.PROMPT_TODO, rules_block(prompt), "규칙 문안이 채워져 있다")
-        self.assertIn(pipeline.PROMPT_TODO, output_block(prompt), "출력 형식 문안이 채워져 있다")
+        self.assertNotIn(
+            pipeline.PROMPT_TODO,
+            rules_block(prompt),
+            "규칙 블록에 자리표시자가 남아 있다. 모델이 그것을 채우려 든다",
+        )
+        self.assertNotIn(
+            pipeline.PROMPT_TODO,
+            output_block(prompt),
+            "출력 블록에 자리표시자가 남아 있다",
+        )
+        self.assertNotIn(
+            pipeline.PROMPT_TODO, prompt.user, "프롬프트 어디에도 자리표시자가 없어야 한다"
+        )
+        # 뼈대가 내는 ``{{정책별 설명}}`` 은 다르다. 그것은 **모델이 채울 자리**이고
+        # ``Skeleton.outline()`` 이 의도적으로 넣는다(``answer.py``). ``PROMPT_TODO`` 는
+        # 사람이 채워야 할 자리라 모델에게 보여선 안 된다. 둘을 구분해 검사한다.
+        self.assertIn(
+            "{{", prompt.user, "전제 확인: 뼈대의 모델 채울 자리는 남아 있어야 한다"
+        )
 
     def test_프로필_값을_그대로_싣고_순서를_고정한다(self):
         """같은 프로필에 같은 프롬프트가 나와야 캐시가 걸린다."""
