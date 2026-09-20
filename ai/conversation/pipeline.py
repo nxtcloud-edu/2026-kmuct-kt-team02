@@ -56,9 +56,12 @@
    출력(문자열 또는 dict)을 ``interpret_turn`` 에 그대로 넘기면 된다.
 3. **항목 이름 표기.** ``ai/judgment`` 는 ``다른 지원 수혜 중`` 같은 한국어를, 이 패키지는
    영문 snake_case 를 쓴다(``fields.py`` 주의 참고). ``unknown_items_from`` 은 **매핑하지
-   않고** 탈락 사실만 드러낸다. 표기를 어느 쪽으로 모을지는 12:00 에 팀이 정한다.
-4. **패키지 자동 로딩.** ``ai/conversation/__init__.py`` 의 ``_MODULE_NAMES`` 에 이 모듈이
-   없다. ``from ai.conversation import pipeline`` 로 직접 import 한다.
+   않고** 탈락 사실만 드러낸다. 표기를 어느 쪽으로 모을지는 12:00 에 팀이 정한다
+   (``docs/09-value-naming-decision.md``).
+4. **planned 확인 질문 배선.** ``InterpretedTurn.needs_planned_confirmation`` 이 참일 때
+   내보낼 질문은 ``questions.build_planned_question()`` 에 있는데, 이 파일은 그것을
+   부르지 않는다. 답변 생성과 같은 턴에 확인 질문을 겹쳐 보내면 어느 쪽에 답하는지
+   모호해지므로, 어느 단계에서 내보낼지는 서버 흐름과 함께 정해야 한다.
 
 실패 방침
 --------
@@ -312,9 +315,10 @@ def unknown_items_from(raw: Any) -> UnknownItems:
         - ``policy_rank`` 가 없거나 정수로 읽히지 않으면 ``DEFAULT_POLICY_RANK`` 로 채운다.
           지금 ``UnknownItem`` 에 기본값이 없어 키 하나가 빠지면 ``TypeError`` 가 난다.
           서버가 즉석에서 dataclass 를 만들면 그 예외를 그대로 맞는다.
-        - ``policy_id`` 가 없으면 빈 문자열로 둔다. ``collect_candidates`` 는 ``policy_id``
-          집합으로 영향 정책 수를 세므로, 빈 문자열끼리는 하나로 합쳐져 **적게** 센다.
-          모르는 값으로 개수를 부풀려 우선순위를 얻는 것보다 적게 세는 쪽이 안전하다.
+        - ``policy_id`` 가 없으면 빈 문자열로 두고 ``missing_policy_id`` 를 기록한다.
+          ``collect_candidates`` 는 빈 값을 정책 수에서 **빼고** 세므로(전부 빈 값이면 1),
+          모르는 값이 영향 정책 수를 부풀려 질문 순서를 얻는 일은 없다. 적게 세는 쪽이
+          안전한 방향이다.
 
     버리는 경우 (예외를 던지지 않고 ``dropped`` 에 남긴다)
         not_a_mapping         dict 가 아니다
@@ -781,7 +785,7 @@ class FinishedTurn:
 
 
 def finish_turn(
-    answer_text: str,
+    answer_text: Any,
     footnotes: Any = None,
     policies: Any = (),
     unknown_items: Any = (),
@@ -810,14 +814,22 @@ def finish_turn(
     ``unknown_items`` 는 규칙 엔진 dict 목록이어도 되고 ``UnknownItem`` 목록이어도 된다.
     dict 면 ``unknown_items_from`` 이 변환하고, **탈락 기록을 결과에 실어 보낸다.**
     후속 질문이 뜨지 않을 때 원인이 표기 불일치인지 아닌지 여기서 바로 보인다.
+
+    ``answer_text`` 가 문자열이 아니면 **빈 답변으로 본다.** 모델 어댑터가 dict 를 그대로
+    넘기거나 파싱 결과를 잘못 꺼내면 여기 문자열이 아닌 값이 온다. 그때 그대로 ``sanitize``
+    에 넘기면 바깥 ``except`` 로 떨어져 답변만 아니라 후속 질문·칩·지표까지 같이 사라진다.
+    답변 한 자리의 실수가 11~12단계를 끌어내리지 않게 이 자리에서 끊는다. ``str()`` 로
+    억지로 바꾸지 않는 이유는 ``{'text': ...}`` 같은 값이 답변 문장처럼 화면에 나가기
+    때문이다. 빈 값이면 ``EMPTY_AFTER_SANITIZE`` 로 실패하고 카드는 남는다.
     """
     try:
         resolved_intent = _as_intent(intent)
         state = _as_asked_state(asked_state)
         items = _coerce_unknown_items(unknown_items)
+        text = answer_text if isinstance(answer_text, str) else ""
 
         # 1. 정리
-        cleaned = answer.sanitize(answer_text or "", footnotes)
+        cleaned = answer.sanitize(text, footnotes)
 
         # 2. 검증 (정리 후 상태를 본다)
         check = answer.validate(cleaned.text, footnotes)

@@ -100,7 +100,13 @@ def collect_candidates(
 
     candidates: List[Candidate] = []
     for name, group in grouped.items():
-        policy_ids = {entry.policy_id for entry in group}
+        # 빈 policy_id 는 세지 않는다. 빈 값 하나가 섞이면 그것이 별개 정책으로 잡혀
+        # 영향 정책 수가 1 늘고, 그 숫자는 질문 문구에 "N개 정책"으로 그대로 나간다
+        # (questions.build). 정책 수는 우선순위도 정하므로(sort_key 3번) 부풀린 값은
+        # 엉뚱한 항목을 먼저 묻게 만든다. 모르는 값이 개수를 얻는 방향을 막고,
+        # 전부 빈 값이면 최소 1개로 본다 — 항목이 하나라도 있으면 정책도 하나는 있다.
+        known_ids = {entry.policy_id for entry in group if entry.policy_id}
+        policy_count = len(known_ids) if known_ids else 1
         titles = [entry.policy_title for entry in group if entry.policy_title]
         # 중복 제목 제거. 순서는 화면 표시 순서를 따른다.
         ordered = sorted(group, key=lambda entry: entry.policy_rank)
@@ -114,7 +120,7 @@ def collect_candidates(
         candidates.append(
             Candidate(
                 field=name,
-                policy_count=len(policy_ids),
+                policy_count=policy_count,
                 best_rank=min(entry.policy_rank for entry in group),
                 policy_titles=unique_titles or titles,
             )
