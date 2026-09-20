@@ -20,6 +20,7 @@
 | `CLAUDE_API_KEY` | 없음 (필수) | API 키. 비어 있으면 `LLMError(kind="config")` |
 | `ANTHROPIC_API_KEY` | 없음 | 대체 이름. `CLAUDE_API_KEY` 가 비었을 때만 본다 |
 | `CLAUDE_MODEL` | 없음 (필수) | 캠프에서 발급받은 정확한 모델 이름. 코드에 기본값을 두지 않는다 |
+| `CLAUDE_BASE_URL` | 없음 (선택) | 캠프 게이트웨이 주소. 비우면 SDK 기본 엔드포인트 |
 | `CLAUDE_MAX_TOKENS` | `1024` | 판정 응답은 조건 몇 개뿐이라 짧다 |
 | `CLAUDE_TEMPERATURE` | `0.0` | 판정이므로 낮게 (연구 문서 7장) |
 
@@ -68,6 +69,11 @@ from typing import Any, Dict, Mapping, Optional, Protocol
 ENV_API_KEY = "CLAUDE_API_KEY"
 ENV_API_KEY_FALLBACK = "ANTHROPIC_API_KEY"
 ENV_MODEL = "CLAUDE_MODEL"
+
+#: 캠프 게이트웨이 주소. 비우면 SDK 기본 엔드포인트(Anthropic 본서버)로 간다.
+#: 캠프 키는 본서버에서 통하지 않으므로, 비면 `auth` 오류가 난다. 원인이
+#: 드러나는 실패라 기본값을 코드에 박지 않는다.
+ENV_BASE_URL = "CLAUDE_BASE_URL"
 ENV_MAX_TOKENS = "CLAUDE_MAX_TOKENS"
 ENV_TEMPERATURE = "CLAUDE_TEMPERATURE"
 
@@ -168,13 +174,17 @@ class ClaudeConfig:
     model: str
     max_tokens: int
     temperature: float
+    #: 게이트웨이를 쓰지 않으면 None. SDK 기본 엔드포인트로 간다.
+    base_url: Optional[str] = None
 
     def __repr__(self) -> str:
         # 키를 절대 출력하지 않는다. 길이도 알리지 않는다.
+        # base_url 은 비밀값이 아니라 그대로 보여준다. 어디로 나가는지 못 보면
+        # 잘못된 엔드포인트를 쓰는 사고를 진단할 수 없다.
         return (
             "ClaudeConfig(api_key='***', "
             f"model={self.model!r}, max_tokens={self.max_tokens!r}, "
-            f"temperature={self.temperature!r})"
+            f"temperature={self.temperature!r}, base_url={self.base_url!r})"
         )
 
     __str__ = __repr__
@@ -212,12 +222,37 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> ClaudeConfig:
     if not 0.0 <= temperature <= 1.0:
         raise LLMError(KIND_CONFIG, f"{ENV_TEMPERATURE} 는 0.0~1.0 범위여야 한다")
 
+    # 게이트웨이 주소는 선택이다. 비어 있으면 None 으로 두고 SDK 기본값을 쓴다.
+    base_url = _read(source, ENV_BASE_URL) or None
+    if base_url is not None:
+        if not base_url.startswith(("http://", "https://")):
+            raise LLMError(
+                KIND_CONFIG,
+                f"{ENV_BASE_URL} 는 http:// 또는 https:// 로 시작해야 한다",
+            )
+        base_url = _strip_version_suffix(base_url)
+
     return ClaudeConfig(
         api_key=api_key,
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
+        base_url=base_url,
     )
+
+
+def _strip_version_suffix(base_url: str) -> str:
+    """주소 끝의 `/v1` 과 군더더기 슬래시를 떼어 낸다.
+
+    Anthropic SDK 는 받은 주소에 `/v1/messages` 를 스스로 붙인다. 캠프 안내가 준
+    주소(`.../v1`)를 그대로 넘기면 `/v1/v1/messages` 가 되어 404 다. 반대로 OpenAI
+    호환 경로는 `/v1` 이 붙은 주소를 원한다. 같은 게이트웨이를 두 입구로 부르는데
+    요구 형태가 다르다. 어느 쪽을 붙여넣어도 동작하도록 루트 형태로 맞춘다.
+    """
+    cleaned = base_url.rstrip("/")
+    if cleaned.endswith("/v1"):
+        cleaned = cleaned[: -len("/v1")]
+    return cleaned.rstrip("/")
 
 
 def _read(source: Mapping[str, str], name: str) -> str:
@@ -376,7 +411,12 @@ class ClaudeClient:
             raise LLMError(KIND_CONFIG, INSTALL_HINT) from None
 
         try:
-            self._sdk = anthropic.Anthropic(api_key=config.api_key)
+            # base_url 이 없으면 인자를 아예 넘기지 않는다. None 을 넘기면 SDK
+            # 버전에 따라 기본값 대신 None 이 그대로 쓰일 수 있다.
+            options: Dict[str, Any] = {"api_key": config.api_key}
+            if config.base_url:
+                options["base_url"] = config.base_url
+            self._sdk = anthropic.Anthropic(**options)
         except Exception as exc:
             raise LLMError(
                 KIND_CONFIG,
@@ -390,7 +430,11 @@ class ClaudeClient:
         kwargs: Dict[str, Any] = {
             "model": config.model,
             "max_tokens": config.max_tokens,
-            "temperature": config.temperature,
+            # temperature 를 최상위 인자로 넘기지 않는 것은 의도다. anthropic 1.7.0
+            # 의 `Messages.create()` 는 temperature 를 받지 않아 TypeError 가 난다.
+            # 실제 게이트웨이 호출로 확인했다. `extra_body` 는 요청 본문에 그대로
+            # 합쳐지므로 게이트웨이까지 값이 간다.
+            "extra_body": {"temperature": config.temperature},
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }
