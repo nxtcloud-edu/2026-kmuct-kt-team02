@@ -42,6 +42,22 @@ export function PolicyDetailPanel({
 
   const conditions = sortConditions(policy.conditions);
 
+  // "왜 안 되는지" 를 만들 재료. 판정이 없으면(로그인 전) 이유를 말할 수 없으므로 비운다 —
+  // 근거 없는 판정을 내보내지 않는 것이 이 패널의 규칙이다.
+  const unmetReasons = evaluated
+    ? conditions.filter((item) => item.result === "unmet").map(conditionName)
+    : [];
+  const unknownConditions = evaluated
+    ? conditions.filter((item) => item.result === "unknown")
+    : [];
+  const unknownReasons = unknownConditions.map(conditionName);
+  // 물을 수 있는 항목이면 대화로 풀 수 있다고 안내한다. "공고 확인 필요" 는 물어도
+  // 답이 나오지 않는 항목이라 그 문장을 붙이면 사용자를 헛되게 만든다.
+  const askableUnknown = unknownConditions.some(
+    (item) => item.needed_field && item.needed_field !== "공고 확인 필요",
+  );
+  const missingExcerptCount = conditions.filter((item) => !item.excerpt).length;
+
   return (
     <SidePanel
       open
@@ -85,6 +101,45 @@ export function PolicyDetailPanel({
       {/* 2. 조건 판정표 */}
       <section className="mt-5">
         <h3 className="text-[0.9375rem] font-bold text-ink-900">조건 판정</h3>
+
+        {/*
+          왜 안 되는지 여기서 말한다.
+
+          조건 목록만 보여 주면 "안 된다"는 결과는 보이는데 이유가 안 보인다. 특히
+          `unmet` 은 사용자에게 가장 무거운 말이라(안 된다고 단정하는 것) 근거 없이
+          아이콘만 띄우면 납득할 수 없다. 조건이 아예 없는 경우도 있는데, 그때는
+          화면이 빈 채로 남아 고장처럼 보인다.
+        */}
+        {conditions.length === 0 ? (
+          <p className="mt-2 rounded-xl border border-line bg-canvas-50 px-3 py-2.5 text-[0.875rem] leading-relaxed text-ink-600">
+            이 제도는 아직 조건을 정리하지 못했어요. 공고 원문을 확인하지 못해서 조건마다
+            근거를 붙일 수 없었어요. 아래 출처에서 직접 확인해 주세요.
+          </p>
+        ) : (
+          <>
+            {unmetReasons.length > 0 && (
+              <p className="mt-2 rounded-xl border border-unlikely-border bg-unlikely-bg px-3 py-2.5 text-[0.875rem] leading-relaxed text-unlikely">
+                <span className="font-bold">지금은 어려워요.</span> 조건 중{" "}
+                {unmetReasons.join(", ")}이(가) 맞지 않아요. 각주를 눌러 공고 원문을 확인할
+                수 있어요.
+              </p>
+            )}
+            {unknownReasons.length > 0 && (
+              <p className="mt-2 rounded-xl border border-check-border bg-check-bg px-3 py-2.5 text-[0.875rem] leading-relaxed text-check">
+                <span className="font-bold">확인이 필요해요.</span>{" "}
+                {unknownReasons.join(", ")}을(를) 아직 몰라서 판정하지 못했어요.
+                {askableUnknown && " AI 상담에서 알려주시면 바로 다시 판정해 드려요."}
+              </p>
+            )}
+            {missingExcerptCount > 0 && (
+              <p className="mt-2 rounded-xl border border-line bg-canvas-50 px-3 py-2.5 text-[0.875rem] leading-relaxed text-ink-600">
+                조건 {missingExcerptCount}개는 공고 원문 발췌를 찾지 못해 각주가 없어요.
+                근거를 확인할 수 없는 조건은 판정을 단정하지 않아요.
+              </p>
+            )}
+          </>
+        )}
+
         <ul className="mt-2 space-y-2">
           {conditions.map((condition) => (
             <li

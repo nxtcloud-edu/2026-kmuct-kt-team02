@@ -386,5 +386,9 @@ def test_answer_timeout_keeps_policies_and_finishes_with_fixed_fallback() -> Non
     answer_text = " ".join(item["delta"] for item in payloads(events, "answer_delta"))
 
     assert "policies" in names
-    assert answer_text == "설명을 불러오지 못했어요. 카드에서 조건을 확인해 주세요."
+    # 모델이 실패해도 판정 결과로 만든 설명이 나간다 (`rule_based_fallback`).
+    # 사과 문구만 내보내면 게이트웨이가 막힌 동안 모든 질문이 같은 한 줄로 답해
+    # 제품이 고장난 것처럼 보인다. 여기서 고정하는 것은 "설명 자리가 비지 않는다"다.
+    assert answer_text.strip()
+    assert answer_text.endswith("최종 신청 전 공식 공고에서 다시 확인하세요.")
     assert names[-1] == "done"

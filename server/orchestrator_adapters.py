@@ -421,3 +421,40 @@ def finalize_answer(
         related=related,
         answer_failed=False,
     )
+
+
+def rule_based_fallback(
+    *,
+    policies: list[PolicyEvaluation],
+    footnotes: list[Footnote],
+    intent: Intent,
+) -> FinalizedAnswer | None:
+    """모델 없이 판정 결과만으로 답변을 만든다. 만들 수 없으면 `None`.
+
+    모델 호출이 실패했을 때 쓴다. 게이트웨이가 분당 요청 수 제한(429)에 걸리면 모든
+    질문이 고정 사과 문구로 답하게 되는데, 답변에 필요한 재료는 이미 판정 결과에 다
+    들어 있다. `ai/conversation/answer.py` 의 `rule_based_answer` 가 그것을 문장으로
+    옮긴다.
+
+    조립한 문장도 `finalize_answer` 를 그대로 통과시킨다. 검증을 건너뛰면 이 경로만
+    금지 표현·각주 규칙 밖에 놓이고, 그 예외는 나중에 아무도 기억하지 못한다.
+    통과하지 못하면 `None` 을 돌려주고 호출부가 고정 문구로 돌아간다.
+
+    `None` 을 돌려주는 경우: 정책이 없거나, 각주를 붙일 수 있는 조건이 없어서 판정
+    문장이 전부 지워진 경우다. 그때는 설명할 내용 자체가 없다.
+    """
+    try:
+        text = conversation_answer.rule_based_answer(
+            [item.model_dump(mode="json") for item in policies]
+        )
+    except Exception:  # noqa: BLE001 - 폴백이 턴을 실패시키지 않게
+        return None
+    if not text.strip():
+        return None
+
+    finalized = finalize_answer(
+        text, policies=policies, footnotes=footnotes, intent=intent
+    )
+    if finalized.answer_failed or not finalized.answer_deltas:
+        return None
+    return finalized

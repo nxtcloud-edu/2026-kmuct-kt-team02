@@ -26,6 +26,7 @@ from server.orchestrator_adapters import (
     footnotes_from_policies,
     merge_exception_judgment,
     next_footnote_id,
+    rule_based_fallback,
     unknown_exception_judgment,
     unknown_items_from_policies,
     validate_ai_json,
@@ -117,6 +118,14 @@ class OrchestratorTimeouts:
     rule_engine_s: float = 1.0
     judgment_s: float = 8.0
     answer_s: float = 15.0
+
+    #: 한 턴에 예외 조건 판정을 부를 정책 수 상한. 0 이면 제한 없음.
+    #:
+    #: 2 를 고른 근거. 한 턴 호출이 해석 1 + 정책당 1 + 답변 1 이라 이 값이 2 면 한 턴이
+    #: 최대 4회다. 게이트웨이 키의 분당 제한에 걸려 429 로 전부 막히는 것을 막는다.
+    #: 1 로 더 줄이면 두 번째 카드에 AI 조건이 안 붙어 "카드마다 조건 수가 다르다" 가
+    #: 눈에 띈다. 3 이상이면 데모 리허설 두세 번에 다시 429 가 난다.
+    max_judged_policies: int = 2
 
     def __post_init__(self) -> None:
         if any(
@@ -210,6 +219,26 @@ class BackendBOrchestrator:
         if not candidates:
             return policies, False
 
+        # 상위 몇 건만 판정한다.
+        #
+        # 한 턴의 모델 호출이 해석 1 + **정책당 1** + 답변 1 이다. 카드가 3건이면 5회이고,
+        # 게이트웨이 키는 분당 요청 수 제한이 있어 리허설을 몇 번 돌리면 429 로 막힌다.
+        # 실제로 데모 중 전 별칭이 429 가 되어 아무 호출도 되지 않았다.
+        #
+        # 자르는 쪽을 택한 근거. 판정을 못 받은 정책은 조건이 규칙 기반 판정만 가진 상태로
+        # 남고, 그 조건들은 이미 카드에 있다. 즉 **잃는 것은 예외 조건 판정뿐이고 카드는
+        # 남는다.** 반대로 429 가 나면 답변까지 못 만들어 화면에 설명이 아예 없다.
+        # 그리고 사용자가 먼저 보는 것은 상위 카드다. `policies` 는 이미 화면 표시 순서로
+        # 정렬돼 있으므로(rules/sorting.py) 앞에서 자르면 눈에 보이는 카드가 먼저 판정된다.
+        limit = self._timeouts.max_judged_policies
+        if limit > 0 and len(candidates) > limit:
+            _LOGGER.info(
+                "예외 조건 판정을 상위 %d건으로 제한합니다 (후보 %d건). 분당 요청 수 보호",
+                limit,
+                len(candidates),
+            )
+            candidates = candidates[:limit]
+
         outputs = await asyncio.gather(
             *(
                 self._judge_one(policy, source, profile)
@@ -271,6 +300,26 @@ class BackendBOrchestrator:
             finalized = None
 
         if finalized is None or finalized.answer_failed or not finalized.answer_deltas:
+            # 모델이 실패해도 **읽을 수 있는 설명**을 내보낸다.
+            #
+            # 이전에는 "설명을 불러오지 못했어요" 한 줄만 나갔다. 화면에 카드는 있으니
+            # 거짓은 아닌데, 설명 자리가 사과로만 채워진다. 게이트웨이가 분당 요청 수
+            # 제한(429)에 걸리면 모든 질문이 그 문구로 답해서 제품이 고장난 것처럼 보였다.
+            #
+            # 답변에 필요한 재료는 이미 판정 결과에 다 있다. `rule_based_answer` 가 그것을
+            # 문장으로 옮긴다 — 지어낸 내용이 없고, 각주도 실제로 있는 번호만 쓴다.
+            # 조립 결과도 `finalize_answer` 를 통과시켜 금지 표현·각주 검사를 거친다.
+            # 그래도 통과하지 못하면 원래 고정 문구로 돌아간다.
+            rule_based = rule_based_fallback(
+                policies=policies, footnotes=footnotes, intent=intent
+            )
+            if rule_based is not None:
+                return (
+                    rule_based.answer_deltas,
+                    footnotes,
+                    rule_based.followup,
+                    rule_based.related,
+                )
             # 답변만 포기하고 **후속 질문과 칩은 살린다.** `finish_turn` 이 이미 계산해 둔
             # 값이다. 금지 표현 하나로 답변이 버려진 턴에서 후속 질문 버튼까지 사라지면
             # 사용자는 대화를 이어갈 수단을 잃고, 그 원인은 화면에 보이지 않는다.

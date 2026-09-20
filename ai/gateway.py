@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
 
@@ -89,6 +90,11 @@ INSTALL_HINT = "게이트웨이를 부르려면 openai 패키지가 필요하다
 
 #: 응답 토큰 상한. 답변은 600자 이내이므로(``answer.MAX_ANSWER_LEN``) 넉넉하다.
 DEFAULT_MAX_TOKENS = 2048
+
+#: 429 를 맞았을 때 한 번 기다리는 시간. 남은 예산을 넘기지 않는다.
+#: 2초를 고른 근거: 분당 제한은 창이 넘어가야 풀리므로 0.5초로는 거의 안 풀리고, 3초 넘게
+#: 기다리면 그 시간이 답변 스트리밍에서 빠져 사용자가 빈 화면을 더 오래 본다.
+_RATE_LIMIT_PAUSE_S = 2.0
 
 
 def _read(source: Mapping[str, str], names: Tuple[str, ...]) -> str:
@@ -347,24 +353,53 @@ class GatewayClient:
         실패가 줄지만, 지금은 **부르지 못하는 것보다 파싱으로 막는 쪽**이 낫다.
         """
         self.calls += 1
-        try:
-            client = self._client()
-            response = client.chat.completions.create(
-                model=model or (self._config.model if self._config else ""),
-                messages=[
-                    {"role": "system", "content": system or ""},
-                    {"role": "user", "content": user or ""},
-                ],
-                temperature=(
-                    llm.TEMPERATURE_STRUCTURED if temperature is None else float(temperature)
-                ),
-                max_tokens=self._config.max_tokens if self._config else DEFAULT_MAX_TOKENS,
-                timeout=max(0.1, float(timeout)),
-            )
-        except judgment_client.LLMError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            raise as_llm_error(exc) from None
+        deadline = time.monotonic() + max(0.1, float(timeout))
+        attempt = 0
+        while True:
+            attempt += 1
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise judgment_client.LLMError(judgment_client.KIND_TIMEOUT, "예산 소진")
+            try:
+                client = self._client()
+                response = client.chat.completions.create(
+                    model=model or (self._config.model if self._config else ""),
+                    messages=[
+                        {"role": "system", "content": system or ""},
+                        {"role": "user", "content": user or ""},
+                    ],
+                    temperature=(
+                        llm.TEMPERATURE_STRUCTURED
+                        if temperature is None
+                        else float(temperature)
+                    ),
+                    max_tokens=(
+                        self._config.max_tokens if self._config else DEFAULT_MAX_TOKENS
+                    ),
+                    timeout=remaining,
+                )
+                break
+            except judgment_client.LLMError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                error = as_llm_error(exc)
+                # 429 만 **주어진 예산 안에서** 한 번 더 시도한다.
+                #
+                # 이 모듈은 원래 재시도하지 않는다(아래 독스트링). 재시도는 예산을 아는
+                # 호출부 몫이고, 두 곳에서 하면 예산이 조용히 두 배로 샌다. 429 만 예외로
+                # 두는 근거는 두 가지다. 분당 요청 수 제한은 **기다리면 반드시 풀리는**
+                # 유일한 실패이고, 데모에서 실제로 전 별칭이 429 가 되어 답변이 아예 나가지
+                # 못했다. 그리고 여기서 재시도해도 예산은 새지 않는다 — 남은 시간을 넘기지
+                # 않고, 넘으면 위 `remaining <= 0` 에서 타임아웃으로 끝난다.
+                #
+                # 한 번만 시도하는 이유: 두 번 이상 기다리면 그 시간이 답변 스트리밍에서
+                # 빠진다. 한 번에 안 풀리는 한도는 기다려서 풀 문제가 아니다.
+                if error.kind != judgment_client.KIND_RATE_LIMIT or attempt > 1:
+                    raise error from None
+                pause = min(_RATE_LIMIT_PAUSE_S, max(0.0, deadline - time.monotonic()))
+                if pause <= 0:
+                    raise error from None
+                time.sleep(pause)
 
         text = _first_text(response)
         if not text:

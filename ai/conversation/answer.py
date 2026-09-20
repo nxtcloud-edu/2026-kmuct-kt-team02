@@ -1153,3 +1153,191 @@ def _deadline_line(policies: Sequence[Mapping[str, Any]]) -> Optional[str]:
     if len(urgent) > len(shown):
         listed = f"{listed} 등"
     return f"마감이 가까운 제도가 있어요: {listed}{SLOT_FOOTNOTE}."
+
+
+# ---------------------------------------------------------------------------
+# 모델 없이 쓰는 답변
+# ---------------------------------------------------------------------------
+
+#: 상태별로 정책 한 줄에 붙일 말. 화면 문구와 같은 표현을 쓴다.
+#:
+#: ``_STATUS_ALIASES`` 의 화면 문구를 그대로 쓰지 않는 이유: 그 값은 카드 배지용 짧은
+#: 문구이고, 여기는 문장 안에 들어가는 서술어다. 같은 판정을 두 자리에서 다르게 말하는
+#: 것이 아니라, 같은 판정을 문장으로 옮긴 것이다.
+_FALLBACK_STATUS_CLAUSE = {
+    LIKELY: "신청 조건을 대체로 만족해요",
+    CHECK: "조건을 더 확인해야 해요",
+    UNLIKELY: "지금은 조건이 맞지 않아요",
+}
+
+#: 조건을 한 줄에 몇 개까지 나열할지. 넘으면 개수로 줄인다.
+_FALLBACK_MAX_CONDITIONS = 2
+
+
+def _subject_particle(word: str) -> str:
+    """받침을 보고 은/는을 고른다.
+
+    코드가 조사를 고르는 이유는 정책명이 데이터에서 오기 때문이다. "(은)는" 같은 표기는
+    화면 문구로 쓰기에 거칠다. ``interpret.py`` 가 같은 이유로 조사를 고른다.
+    """
+    if not word:
+        return "는"
+    last = word[-1]
+    if not ("가" <= last <= "힣"):
+        # 한글이 아니면 받침을 알 수 없다. 영문·숫자로 끝나는 제도명이 있다(SeSSaC).
+        return "는"
+    return "는" if (ord(last) - 0xAC00) % 28 == 0 else "은"
+
+
+def _object_particle(word: str) -> str:
+    """받침을 보고 을/를 고른다. 각주 대괄호로 끝나면 그 앞 글자를 본다."""
+    text = re.sub(r"\[\d+\]$", "", word or "")
+    if not text:
+        return "를"
+    last = text[-1]
+    if not ("가" <= last <= "힣"):
+        return "를"
+    return "를" if (ord(last) - 0xAC00) % 28 == 0 else "을"
+
+
+def _fallback_condition_clause(policy: Mapping[str, Any]) -> str:
+    """정책 한 줄에 붙일 조건 설명. 각주 번호까지 포함한다.
+
+    미충족 조건을 먼저, 없으면 미확인 조건을 말한다. 사용자가 먼저 알아야 하는 것이
+    "무엇이 걸리는가"이기 때문이다. 충족 조건만 나열하면 왜 `check` 인지 알 수 없다.
+    """
+    raw = policy.get("conditions")
+    conditions = [
+        item
+        for item in (raw if isinstance(raw, (list, tuple)) else ())
+        if isinstance(item, Mapping)
+    ]
+    for wanted in ("unmet", "unknown"):
+        picked = [item for item in conditions if str(item.get("result") or "") == wanted]
+        if not picked:
+            continue
+        names: List[str] = []
+        for item in picked[:_FALLBACK_MAX_CONDITIONS]:
+            name = str(item.get("name") or item.get("summary") or "").strip()
+            if not name:
+                continue
+            number = _as_int(item.get("footnote_id"))
+            # 각주가 있는 조건만 번호를 붙인다. 없는 번호를 쓰면 ``validate`` 가 그
+            # 문장을 버리고, 그러면 이 폴백까지 빈 답변이 된다.
+            names.append(f"{name}[{number}]" if number is not None else name)
+        if not names:
+            continue
+        more = len(picked) - len(names)
+        joined = ", ".join(names)
+        tail = f" 외 {more}개" if more > 0 else ""
+        # 주어("{제목}은")가 이미 앞에 붙으므로 여기서는 서술어만 만든다. 조건 이름을
+        # 목적어로 두면 "제도는 소득 기준을 확인해야 해요" 처럼 한 문장으로 읽힌다.
+        if wanted == "unmet":
+            return f"{joined}{tail}{_object_particle(joined + tail)} 아직 만족하지 못해요"
+        return f"{joined}{tail}{_object_particle(joined + tail)} 확인해야 해요"
+    return ""
+
+
+def _fallback_any_footnote(policy: Mapping[str, Any]) -> Optional[int]:
+    """정책의 조건 중 각주 번호 하나. 없으면 None."""
+    raw = policy.get("conditions")
+    for item in raw if isinstance(raw, (list, tuple)) else ():
+        if not isinstance(item, Mapping):
+            continue
+        number = _as_int(item.get("footnote_id"))
+        if number is not None:
+            return number
+    return None
+
+
+def _fallback_fill_footnote(
+    line: str, frame: "Skeleton", by_id: Mapping[str, Mapping[str, Any]]
+) -> str:
+    """마감 문장의 ``[각주]`` 자리를 실제 번호로 바꾼다. 못 바꾸면 빈 문자열.
+
+    어느 정책의 번호를 쓸지는 문장에 제목이 나오는 정책으로 정한다. 마감 문장은
+    ``build_skeleton`` 이 "마감이 가까운 제도가 있어요: {제목} {배지}[각주]" 로 만들기
+    때문에 제목이 반드시 들어 있다.
+    """
+    for slot in frame.policy_slots:
+        if slot.title and slot.title in line:
+            number = _fallback_any_footnote(by_id.get(slot.policy_id, {}))
+            if number is not None:
+                return line.replace("[각주]", f"[{number}]")
+            return ""
+    return ""
+
+
+def rule_based_answer(
+    policies: Sequence[Mapping[str, Any]], skeleton: Optional[Skeleton] = None
+) -> str:
+    """**모델 없이** 답변 본문을 만든다.
+
+    왜 있는가
+    ---------
+    모델 호출이 실패하면 지금까지는 "설명을 불러오지 못했어요. 카드에서 조건을 확인해
+    주세요." 한 줄만 나갔다. 화면에 카드는 있으니 거짓은 아니지만, **설명 자리가 사과로만
+    채워진다.** 데모 중 게이트웨이가 분당 요청 수 제한(429)에 걸려 전 별칭이 막혔을 때
+    실제로 그 상태가 됐다.
+
+    그런데 답변에 필요한 재료는 이미 코드가 다 갖고 있다. ``build_skeleton`` 이 요약 문장,
+    정책별 자리, 마감 강조 문장, 고정 문구를 확정해 두고, 모델은 그 사이를 문장으로 잇는
+    일만 한다. 그 잇는 일을 **덜 매끄럽게라도 코드가 대신** 하면, 모델이 죽어도 사용자는
+    읽을 수 있는 안내를 받는다.
+
+    무엇을 포기하는가
+    -----------------
+    문장이 기계적이다. 사용자의 질문 맥락을 반영하지 못하고, 정책마다 같은 틀로 말한다.
+    그 대가로 얻는 것은 **틀리지 않음**이다. 여기서 만드는 모든 문장은 판정 결과와 조건
+    이름을 그대로 옮긴 것이라 지어낸 내용이 없고, 각주도 실제로 있는 번호만 쓴다.
+    ``validate`` 를 그대로 통과하도록 만들었다 — 금지 표현을 쓰지 않고, 판정을 말하는
+    문장에는 각주를 붙이고, 고정 문구로 끝낸다.
+
+    이 함수를 **모델 성공 경로에 쓰지 않는다.** 모델이 답하면 그 문장이 낫다.
+    """
+    try:
+        rows = [
+            item
+            for item in (policies if isinstance(policies, (list, tuple)) else ())
+            if isinstance(item, Mapping)
+        ]
+        frame = skeleton if isinstance(skeleton, Skeleton) else build_skeleton(rows)
+
+        parts: List[str] = [frame.summary]
+        by_id = {str(item.get("policy_id") or ""): item for item in rows}
+
+        for slot in frame.policy_slots:
+            policy = by_id.get(slot.policy_id, {})
+            particle = _subject_particle(slot.title)
+            condition = _fallback_condition_clause(policy)
+            if condition:
+                parts.append(f"{slot.title}{particle} {condition}.")
+                continue
+            clause = _FALLBACK_STATUS_CLAUSE.get(slot.status, "")
+            if not clause:
+                continue
+            # 이 문장은 판정을 말하므로 각주가 필요하다(README 6장). 붙일 번호가 없으면
+            # ``validate`` 가 잡고 ``sanitize`` 가 문장을 지운다 — 실제로 그렇게 지워져서
+            # `likely` 정책이 답변에서 사라졌다. 그 정책의 조건 중 각주가 있는 아무 번호를
+            # 근거로 쓴다. 상태는 그 조건들을 합쳐 계산한 값이므로 근거 관계가 맞는다.
+            number = _fallback_any_footnote(policy)
+            if number is None:
+                # 각주가 하나도 없는 정책은 근거를 댈 수 없다. 판정을 말하지 않고 넘긴다.
+                # 카드에는 그 정책이 그대로 있으므로 사용자가 잃는 것은 설명 한 줄이다.
+                continue
+            parts.append(f"{slot.title}{particle} {clause}[{number}].")
+
+        # 마감 문장은 ``build_skeleton`` 이 각주 자리를 ``[각주]`` 로 비워 둔다. 모델이
+        # 실제 번호로 바꿔 쓰는 자리인데 여기서는 바꿔 줄 모델이 없다. 그대로 두면
+        # ``validate`` 가 없는 각주로 보고 문장을 지운다. 마감 정책의 각주 번호로 바꿔
+        # 끼운다. 번호를 못 찾으면 그 문장을 포기한다 — 마감은 카드 배지에 이미 있다.
+        if frame.deadline_line:
+            deadline_line = _fallback_fill_footnote(frame.deadline_line, frame, by_id)
+            if deadline_line:
+                parts.append(deadline_line)
+        parts.extend(frame.extra_lines)
+        parts.append(f"{frame.closing_line}.")
+
+        return " ".join(part for part in parts if part)
+    except Exception:  # noqa: BLE001 - 폴백이 실패하면 남는 것이 없다
+        return f"{CLOSING_LINE}."
