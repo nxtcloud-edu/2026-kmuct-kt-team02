@@ -139,8 +139,11 @@ def test_chat_transport_envelopes_service_events_and_masks_input() -> None:
         "/chat",
         json={
             "session_id": session_id,
-            "message": f"제 주민번호는 {resident_number}입니다.",
             "client_message_id": "frontend-message-1",
+            "turn": {
+                "type": "message",
+                "message": f"제 주민번호는 {resident_number}입니다.",
+            },
         },
     )
 
@@ -171,8 +174,8 @@ def test_missing_session_returns_json_404_before_service_stream() -> None:
         "/chat",
         json={
             "session_id": "00000000-0000-4000-8000-000000000000",
-            "message": "장학금 알려줘",
             "client_message_id": "frontend-message-2",
+            "turn": {"type": "message", "message": "장학금 알려줘"},
         },
     )
 
@@ -193,8 +196,8 @@ def test_expired_session_is_removed_before_service_stream() -> None:
         "/chat",
         json={
             "session_id": session_id,
-            "message": "장학금 알려줘",
             "client_message_id": "frontend-message-3",
+            "turn": {"type": "message", "message": "장학금 알려줘"},
         },
     )
 
@@ -226,6 +229,7 @@ def test_transport_cancellation_closes_pending_service_stream() -> None:
         pipeline_request = ChatPipelineRequest(
             session_id=uuid4(),
             client_message_id="disconnect-test",
+            turn_type="message",
             masked_message="장학금 알려줘",
             profile=profile(),
         )

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
@@ -10,7 +12,9 @@ from typing import Protocol
 
 from pydantic import JsonValue
 
+from ai.conversation import answer as conversation_answer
 from server.chat_service import ChatPipelineRequest, ChatServiceEvent
+from server.metrics import record_chat_metric
 from server.orchestrator_adapters import (
     ExceptionJudgmentOutput,
     Intent,
@@ -23,21 +27,24 @@ from server.orchestrator_adapters import (
     next_footnote_id,
     unknown_exception_judgment,
     validate_ai_json,
+    planned_followup,
 )
 from server.policy_repository import PolicySourceCatalog
 from server.rule_engine import RuleEngine, RuleEngineResult
 from server.schemas import ContractModel, Policy, PolicyEvaluation
-from server.session_store import SessionStore
+from server.session_store import PendingProfileChange, SessionStore, TurnSummary
 from server.sse import (
     AnswerDeltaEventData,
     FootnotesEventData,
     PoliciesEventData,
     ProfileUpdateEventData,
+    ErrorEventData,
     SSEEventName,
     StatusEventData,
 )
 
 _FALLBACK_ANSWER = "설명을 불러오지 못했어요. 카드에서 조건을 확인해 주세요."
+_SENTENCE_END = re.compile(r"[.!?。！？]+(?:\s+|$)")
 
 
 class LLMTask(StrEnum):
@@ -126,10 +133,15 @@ class BackendBOrchestrator:
         self._timeouts = timeouts or OrchestratorTimeouts()
 
     async def _interpret(self, request: ChatPipelineRequest):
+        if request.turn_type != "message":
+            return apply_message_interpretation(
+                request.profile,
+                MessageInterpretationOutput(intent=Intent.FIND_POLICY),
+            )
         llm_request = StructuredLLMRequest(
             task=LLMTask.INTERPRET_MESSAGE,
             input={
-                "message": request.masked_message,
+                "message": request.masked_message or "",
                 "profile": request.profile.model_dump(mode="json"),
             },
             output_schema=MessageInterpretationOutput.model_json_schema(),
@@ -175,14 +187,14 @@ class BackendBOrchestrator:
         self,
         policies: list[PolicyEvaluation],
         profile,
-    ) -> tuple[list[PolicyEvaluation], bool]:
+    ) -> tuple[list[PolicyEvaluation], bool, int]:
         candidates: list[tuple[int, PolicyEvaluation, Policy]] = []
         for index, policy in enumerate(policies):
             source = self._policy_sources.get(policy.policy_id)
             if source is not None and source.exceptions_text.strip():
                 candidates.append((index, policy, source))
         if not candidates:
-            return policies, False
+            return policies, False, 0
 
         outputs = await asyncio.gather(
             *(
@@ -193,6 +205,7 @@ class BackendBOrchestrator:
         updated = list(policies)
         footnote_id = next_footnote_id(policies)
         changed = False
+        citation_failures = 0
         for (index, policy, source), output in zip(candidates, outputs, strict=True):
             merged = merge_exception_judgment(
                 policy,
@@ -202,8 +215,9 @@ class BackendBOrchestrator:
             )
             updated[index] = merged.policy
             changed = changed or merged.changed
+            citation_failures += merged.citation_failures
             footnote_id += len(merged.policy.conditions) - len(policy.conditions)
-        return updated, changed
+        return updated, changed, citation_failures
 
     async def _generate_answer(
         self,
@@ -258,37 +272,182 @@ class BackendBOrchestrator:
             finalized.related,
         )
 
+    @staticmethod
+    def _complete_sentences(buffer: str) -> tuple[list[str], str]:
+        """Keep an incomplete model fragment private until a sentence is complete."""
+
+        completed: list[str] = []
+        cursor = 0
+        for match in _SENTENCE_END.finditer(buffer):
+            sentence = buffer[cursor:match.end()].strip()
+            if sentence:
+                completed.append(sentence)
+            cursor = match.end()
+        return completed, buffer[cursor:]
+
+    async def _stream_safe_answer(
+        self,
+        *,
+        profile,
+        policies: list[PolicyEvaluation],
+        intent: Intent,
+        fixed_reply: str | None,
+    ) -> AsyncIterator[ChatServiceEvent]:
+        """Emit only sentence-complete, citation-sanitized answer deltas."""
+
+        footnotes = footnotes_from_policies(policies)
+        if fixed_reply:
+            yield ChatServiceEvent(SSEEventName.ANSWER_DELTA, AnswerDeltaEventData(delta=fixed_reply))
+            yield ChatServiceEvent(SSEEventName.FOOTNOTES, FootnotesEventData(footnotes=footnotes))
+            return
+
+        raw_parts: list[str] = []
+        pending = ""
+        emitted = False
+        failed = False
+        followup = None
+        related = None
+        try:
+            prompt = build_answer_prompt(profile, policies, footnotes)
+            llm_request = TextLLMRequest(
+                task=LLMTask.COMPOSE_ANSWER,
+                system=prompt.system,
+                user=prompt.user,
+            )
+            async with asyncio.timeout(self._timeouts.answer_s):
+                async for chunk in self._llm_client.stream_text(llm_request):
+                    if not isinstance(chunk, str):
+                        raise TypeError("answer chunks must be strings")
+                    raw_parts.append(chunk)
+                    complete, pending = self._complete_sentences(pending + chunk)
+                    for sentence in complete:
+                        cleaned = conversation_answer.sanitize(
+                            sentence,
+                            [item.model_dump(mode="json") for item in footnotes],
+                        )
+                        checked = conversation_answer.validate(
+                            cleaned.text,
+                            [item.model_dump(mode="json") for item in footnotes],
+                        )
+                        if cleaned.text.strip() and checked.ok:
+                            emitted = True
+                            yield ChatServiceEvent(
+                                SSEEventName.ANSWER_DELTA,
+                                AnswerDeltaEventData(delta=cleaned.text.strip()),
+                            )
+
+            if pending.strip():
+                cleaned = conversation_answer.sanitize(
+                    pending,
+                    [item.model_dump(mode="json") for item in footnotes],
+                )
+                checked = conversation_answer.validate(
+                    cleaned.text,
+                    [item.model_dump(mode="json") for item in footnotes],
+                )
+                if cleaned.text.strip() and checked.ok:
+                    emitted = True
+                    yield ChatServiceEvent(
+                        SSEEventName.ANSWER_DELTA,
+                        AnswerDeltaEventData(delta=cleaned.text.strip()),
+                    )
+
+            finalized = finalize_answer(
+                "".join(raw_parts),
+                policies=policies,
+                footnotes=footnotes,
+                intent=intent,
+            )
+            followup = finalized.followup
+            related = finalized.related
+            # A sentence can be locally incomplete even though the completed
+            # answer is valid as a whole (for example, a citation follows the
+            # sentence boundary). In that case fall back to the final safe
+            # splitter rather than exposing raw chunks or failing a good turn.
+            if not emitted and not finalized.answer_failed:
+                for delta in finalized.answer_deltas:
+                    emitted = True
+                    yield ChatServiceEvent(SSEEventName.ANSWER_DELTA, delta)
+            failed = finalized.answer_failed or not emitted
+        except Exception:
+            failed = True
+
+        if failed:
+            yield ChatServiceEvent(
+                SSEEventName.ANSWER_DELTA,
+                AnswerDeltaEventData(delta=_FALLBACK_ANSWER),
+            )
+            yield ChatServiceEvent(
+                SSEEventName.ERROR,
+                ErrorEventData(
+                    code="answer_failed",
+                    message=_FALLBACK_ANSWER,
+                ),
+            )
+            # The transport appends the sole `done` event after this terminal
+            # error.  Do not leak optional follow-ups or chips from an answer
+            # that could not pass the safety gate.
+            return
+        yield ChatServiceEvent(SSEEventName.FOOTNOTES, FootnotesEventData(footnotes=footnotes))
+        if followup is not None:
+            yield ChatServiceEvent(SSEEventName.FOLLOWUP, followup)
+        if related is not None:
+            yield ChatServiceEvent(SSEEventName.RELATED, related)
+
     async def stream(
         self,
         request: ChatPipelineRequest,
     ) -> AsyncIterator[ChatServiceEvent]:
+        turn_started_at = time.perf_counter()
         yield ChatServiceEvent(
             SSEEventName.STATUS,
             StatusEventData(stage="searching"),
         )
 
+        interpretation_started_at = time.perf_counter()
         turn = await self._interpret(request)
+        interpretation_ms = int((time.perf_counter() - interpretation_started_at) * 1000)
         if turn.profile != request.profile:
-            self._session_store.update_profile(request.session_id, turn.profile)
+            current_fields = (
+                {change.field for change in turn.profile_update.changes}
+                if turn.profile_update is not None
+                else set()
+            )
+            self._session_store.update_profile(
+                request.session_id,
+                turn.profile,
+                clear_pending_fields=current_fields,
+            )
+        if turn.planned_changes:
+            self._session_store.set_pending_planned_changes(
+                request.session_id,
+                tuple(
+                    PendingProfileChange(field, value)
+                    for field, value in turn.planned_changes.items()
+                ),
+            )
+        # Direct follow-up turns were already summarized atomically with their
+        # profile update by SessionStore.  Only interpreted message turns need
+        # a new summary here.
+        if request.turn_type == "message":
+            self._session_store.record_turn_summary(
+                request.session_id,
+                TurnSummary(kind=request.turn_type, intent=turn.intent.value),
+            )
 
         profile_update = turn.profile_update
-        if request.pii_notice:
-            if profile_update is None:
-                profile_update = ProfileUpdateEventData(
-                    changed_fields={},
-                    message=request.pii_notice,
-                    profile=turn.profile,
-                )
-            else:
-                profile_update = ProfileUpdateEventData(
-                    changed_fields=profile_update.changed_fields,
-                    message=f"{request.pii_notice} {profile_update.message}",
-                    profile=profile_update.profile,
-                )
+        if request.pii_notice and profile_update is not None:
+            profile_update = ProfileUpdateEventData(
+                changes=profile_update.changes,
+                notice=f"{request.pii_notice} {profile_update.notice}",
+                profile=profile_update.profile,
+            )
         if profile_update is not None:
             yield ChatServiceEvent(SSEEventName.PROFILE_UPDATE, profile_update)
 
+        rules_started_at = time.perf_counter()
         rule_result = await self._run_rules(turn.profile)
+        rules_ms = int((time.perf_counter() - rules_started_at) * 1000)
         initial_payload = PoliciesEventData(
             policies=rule_result.policies,
             hidden_unlikely_count=rule_result.hidden_unlikely_count,
@@ -299,10 +458,12 @@ class BackendBOrchestrator:
             StatusEventData(stage="checking"),
         )
 
-        final_policies, changed = await self._apply_exception_judgments(
+        judgment_started_at = time.perf_counter()
+        final_policies, changed, citation_failures = await self._apply_exception_judgments(
             list(rule_result.policies),
             turn.profile,
         )
+        judgment_ms = int((time.perf_counter() - judgment_started_at) * 1000)
         if changed:
             yield ChatServiceEvent(
                 SSEEventName.POLICIES,
@@ -316,19 +477,28 @@ class BackendBOrchestrator:
             SSEEventName.STATUS,
             StatusEventData(stage="summarizing"),
         )
-        answer_deltas, footnotes, followup, related = await self._generate_answer(
+        answer_started_at = time.perf_counter()
+        async for event in self._stream_safe_answer(
             profile=turn.profile,
             policies=final_policies,
             intent=turn.intent,
             fixed_reply=turn.fixed_reply,
+        ):
+            # A planned-basis question is the only follow-up for its turn.
+            if event.event == SSEEventName.FOLLOWUP and planned_followup(turn) is not None:
+                continue
+            yield event
+        planned_question = planned_followup(turn)
+        if planned_question is not None:
+            yield ChatServiceEvent(SSEEventName.FOLLOWUP, planned_question)
+        record_chat_metric(
+            {
+                "duration_ms": int((time.perf_counter() - turn_started_at) * 1000),
+                "outcome": "orchestrated",
+                "citation_failures": citation_failures,
+                "interpretation_ms": interpretation_ms,
+                "rules_ms": rules_ms,
+                "judgment_ms": judgment_ms,
+                "answer_ms": int((time.perf_counter() - answer_started_at) * 1000),
+            }
         )
-        for delta in answer_deltas:
-            yield ChatServiceEvent(SSEEventName.ANSWER_DELTA, delta)
-        yield ChatServiceEvent(
-            SSEEventName.FOOTNOTES,
-            FootnotesEventData(footnotes=footnotes),
-        )
-        if followup is not None:
-            yield ChatServiceEvent(SSEEventName.FOLLOWUP, followup)
-        if related is not None:
-            yield ChatServiceEvent(SSEEventName.RELATED, related)

@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 from ai.judgment.citation import verify_conditions
 from ai.conversation import answer as conversation_answer
+from ai.conversation import interpret as conversation_interpret
 from ai.conversation import pipeline as conversation_pipeline
+from ai.conversation import questions as conversation_questions
 from server.schemas import (
     AskableProfileField,
     Category,
@@ -27,7 +29,9 @@ from server.schemas import (
 from server.sse import (
     AnswerDeltaEventData,
     Footnote,
+    ProfileChange,
     ProfileUpdateEventData,
+    RelatedChip,
     RelatedEventData,
 )
 
@@ -68,8 +72,8 @@ class MessageInterpretationOutput(ContractModel):
 
 
 class AIExceptionCondition(ContractModel):
-    summary: str = Field(min_length=1, max_length=20)
-    result: Literal["충족", "미충족", "미확인"]
+    name: str = Field(min_length=1, max_length=20)
+    result: ConditionResult
     excerpt: str | None = Field(default=None, min_length=10, max_length=150)
     needed_field: str | None = Field(default=None, max_length=64)
 
@@ -96,6 +100,7 @@ class ConversationTurn(ContractModel):
     profile_update: ProfileUpdateEventData | None = None
     intent: Intent
     fixed_reply: str | None = None
+    planned_changes: dict[ProfileField, JsonValue] = Field(default_factory=dict)
 
 
 def apply_message_interpretation(
@@ -118,7 +123,7 @@ def apply_message_interpretation(
             fixed_reply=interpreted.fixed_reply,
         )
 
-    changed_fields: dict[ProfileField, JsonValue] = {}
+    changes: list[ProfileChange] = []
     raw_update = interpreted.profile_update or {}
     raw_changes = raw_update.get("changes", [])
     updated_values = updated_profile.model_dump(mode="json")
@@ -130,14 +135,30 @@ def apply_message_interpretation(
                 field = ProfileField(str(change.get("field") or ""))
             except ValueError:
                 continue
-            changed_fields[field] = updated_values[field.value]
+            changes.append(
+                ProfileChange(
+                    field=field,
+                    before=change.get("before"),
+                    after=updated_values[field.value],
+                    label=change.get("label"),
+                    notice=change.get("notice"),
+                )
+            )
+
+    planned_changes: dict[ProfileField, JsonValue] = {}
+    for change in getattr(interpreted.merged, "held", ()):
+        try:
+            field = ProfileField(str(change.field))
+        except (AttributeError, ValueError):
+            continue
+        planned_changes[field] = change.value
 
     profile_update = None
-    if changed_fields:
+    if changes:
         notice = str(raw_update.get("notice") or "").strip()
         profile_update = ProfileUpdateEventData(
-            changed_fields=changed_fields,
-            message=notice or "프로필을 갱신했어요.",
+            changes=changes,
+            notice=notice or "프로필을 갱신했어요.",
             profile=updated_profile,
         )
 
@@ -146,14 +167,26 @@ def apply_message_interpretation(
         profile_update=profile_update,
         intent=Intent(interpreted.intent),
         fixed_reply=interpreted.fixed_reply,
+        planned_changes=planned_changes,
     )
 
 
-_RESULT_MAP: dict[str, ConditionResult] = {
-    "충족": ConditionResult.MET,
-    "미충족": ConditionResult.UNMET,
-    "미확인": ConditionResult.UNKNOWN,
-}
+def planned_followup(turn: ConversationTurn) -> FollowupQuestion | None:
+    """Build one planned-basis question before ordinary unknown-field questions."""
+
+    if not turn.planned_changes:
+        return None
+    field, value = next(iter(turn.planned_changes.items()))
+    payload = conversation_questions.build_planned_question(
+        field.value,
+        conversation_interpret.label_of(field.value, value),
+    )
+    try:
+        return FollowupQuestion.model_validate(payload)
+    except ValidationError:
+        return None
+
+
 _STATUS_LABELS: dict[EvaluationStatus, str] = {
     EvaluationStatus.LIKELY: "신청 가능성이 높아요",
     EvaluationStatus.CHECK: "확인이 필요해요",
@@ -185,8 +218,8 @@ def unknown_exception_judgment() -> ExceptionJudgmentOutput:
     return ExceptionJudgmentOutput(
         conditions=[
             AIExceptionCondition(
-                summary=_ASK_NOTICE,
-                result="미확인",
+                name=_ASK_NOTICE,
+                result=ConditionResult.UNKNOWN,
                 excerpt=None,
                 needed_field=_ASK_NOTICE,
             )
@@ -243,11 +276,14 @@ def merge_exception_judgment(
 
     for item in checked:
         verified = bool(item.get("excerpt_verified")) and bool(item.get("excerpt"))
-        name = str(item.get("summary") or _ASK_NOTICE).strip()[:20] or _ASK_NOTICE
+        name = str(item.get("name") or _ASK_NOTICE).strip()[:20] or _ASK_NOTICE
         if name in seen_names:
             continue
         seen_names.add(name)
-        result = _RESULT_MAP.get(str(item.get("result")), ConditionResult.UNKNOWN)
+        try:
+            result = ConditionResult(str(item.get("result")))
+        except ValueError:
+            result = ConditionResult.UNKNOWN
         needed_field = _needed_field(item.get("needed_field"))
         if result == ConditionResult.UNKNOWN and needed_field is None:
             needed_field = _ASK_NOTICE
@@ -407,13 +443,18 @@ def finalize_answer(
 
     related = None
     raw_chips = finished.related.get("chips", []) if isinstance(finished.related, dict) else []
-    questions = [
-        str(chip.get("text") or "").strip()
+    chips = [
+        RelatedChip(
+            id=str(chip.get("id") or "").strip(),
+            text=str(chip.get("text") or "").strip(),
+        )
         for chip in raw_chips
-        if isinstance(chip, dict) and str(chip.get("text") or "").strip()
+        if isinstance(chip, dict)
+        and str(chip.get("id") or "").strip()
+        and str(chip.get("text") or "").strip()
     ][:3]
-    if questions:
-        related = RelatedEventData(questions=questions)
+    if chips:
+        related = RelatedEventData(chips=chips)
 
     return FinalizedAnswer(
         answer_deltas=deltas,

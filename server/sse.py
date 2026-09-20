@@ -16,6 +16,7 @@ from server.schemas import (
     Profile,
     ProfileField,
 )
+from server.errors import ErrorCode
 
 PayloadT = TypeVar("PayloadT")
 
@@ -28,6 +29,7 @@ class SSEEventName(StrEnum):
     FOOTNOTES = "footnotes"
     FOLLOWUP = "followup"
     RELATED = "related"
+    ERROR = "error"
     DONE = "done"
 
 
@@ -42,9 +44,17 @@ class StatusEventData(ContractModel):
 
 
 class ProfileUpdateEventData(ContractModel):
-    changed_fields: dict[ProfileField, JsonValue]
-    message: str
+    changes: Annotated[list["ProfileChange"], Field(min_length=1)]
+    notice: str
     profile: Profile
+
+
+class ProfileChange(ContractModel):
+    field: ProfileField
+    before: JsonValue | None = None
+    after: JsonValue | None = None
+    label: str | None = None
+    notice: str | None = None
 
 
 class PoliciesEventData(ContractModel):
@@ -70,7 +80,17 @@ class FootnotesEventData(ContractModel):
 
 
 class RelatedEventData(ContractModel):
-    questions: Annotated[list[str], Field(max_length=3)]
+    chips: Annotated[list["RelatedChip"], Field(max_length=3)]
+
+
+class RelatedChip(ContractModel):
+    id: Annotated[str, Field(min_length=1)]
+    text: Annotated[str, Field(min_length=1)]
+
+
+class ErrorEventData(ContractModel):
+    code: ErrorCode
+    message: Annotated[str, Field(min_length=1)]
 
 
 class DoneEventData(ContractModel):
@@ -112,6 +132,11 @@ class RelatedEvent(ContractModel):
     data: SSEEnvelope[RelatedEventData]
 
 
+class ErrorEvent(ContractModel):
+    event: Literal["error"] = "error"
+    data: SSEEnvelope[ErrorEventData]
+
+
 class DoneEvent(ContractModel):
     event: Literal["done"] = "done"
     data: SSEEnvelope[DoneEventData]
@@ -125,6 +150,7 @@ SSEEvent: TypeAlias = Annotated[
     | FootnotesEvent
     | FollowupEvent
     | RelatedEvent
+    | ErrorEvent
     | DoneEvent,
     Field(discriminator="event"),
 ]

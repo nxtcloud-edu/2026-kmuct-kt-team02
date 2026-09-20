@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from server.config import Settings
+from server.config import ConfigurationError, Settings
 from server.schemas import Profile
 from server.session_store import Session, SessionExpiredError, SessionStore
 
@@ -42,6 +42,14 @@ def test_session_stores_only_contract_fields_and_uses_sliding_ttl() -> None:
         "created_at",
         "last_accessed_at",
         "expires_at",
+        "asked_fields",
+        "skipped_fields",
+        "shown_chip_ids",
+        "planned_basis",
+        "pending_planned_changes",
+        "recent_turns",
+        "current_policy_ids",
+        "processed_message_ids",
     }
     assert created.session_id.version == 4
     assert created.created_at == clock.current
@@ -78,3 +86,30 @@ def test_session_ttl_is_loaded_from_environment() -> None:
     )
 
     assert settings.session_ttl_seconds == 45
+
+
+def test_chat_safety_settings_have_safe_defaults_and_reject_invalid_values() -> None:
+    settings = Settings.from_env(
+        {
+            "CORS_LOCALHOST_ORIGINS": "",
+            "CORS_S3_ORIGINS": "",
+            "CHAT_TOTAL_TIMEOUT_SECONDS": "20",
+            "CHAT_RATE_LIMIT_PER_MINUTE": "10",
+            "DEMO_MODE": "true",
+            "DEMO_CACHE_TTL_SECONDS": "300",
+        }
+    )
+
+    assert settings.chat_total_timeout_seconds == 20
+    assert settings.chat_rate_limit_per_minute == 10
+    assert settings.demo_mode is True
+    assert settings.demo_cache_ttl_seconds == 300
+
+    with pytest.raises(ConfigurationError):
+        Settings.from_env(
+            {
+                "CORS_LOCALHOST_ORIGINS": "",
+                "CORS_S3_ORIGINS": "",
+                "CHAT_RATE_LIMIT_PER_MINUTE": "0",
+            }
+        )

@@ -3,7 +3,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from server.sse import StatusEvent, encode_sse, validate_sse_event
+from server.sse import ErrorEvent, StatusEvent, encode_sse, validate_sse_event
 
 REQUEST_ID = UUID("00000000-0000-4000-8000-000000000001")
 
@@ -43,7 +43,7 @@ def test_sse_rejects_zero_sequence_and_non_contract_event() -> None:
     with pytest.raises(ValidationError):
         validate_sse_event(
             {
-                "event": "error",
+                "event": "not_a_contract_event",
                 "data": {
                     "request_id": REQUEST_ID,
                     "seq": 1,
@@ -51,6 +51,25 @@ def test_sse_rejects_zero_sequence_and_non_contract_event() -> None:
                 },
             }
         )
+
+
+def test_sse_validates_recoverable_error_payload() -> None:
+    event = validate_sse_event(
+        {
+            "event": "error",
+            "data": {
+                "request_id": REQUEST_ID,
+                "seq": 2,
+                "payload": {
+                    "code": "timeout",
+                    "message": "응답이 오래 걸려 여기까지의 결과를 보여드려요.",
+                },
+            },
+        }
+    )
+
+    assert isinstance(event, ErrorEvent)
+    assert event.data.payload.code == "timeout"
 
 
 def test_sse_encoder_emits_common_data_envelope() -> None:

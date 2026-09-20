@@ -80,6 +80,10 @@ class Settings:
     s3_cors_origins: tuple[str, ...]
     llm_adapter_name: str | None
     session_ttl_seconds: int = 1800
+    chat_total_timeout_seconds: int = 20
+    chat_rate_limit_per_minute: int = 10
+    demo_mode: bool = False
+    demo_cache_ttl_seconds: int = 300
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "Settings":
@@ -103,11 +107,29 @@ class Settings:
         if session_ttl_seconds <= 0:
             raise ConfigurationError("SESSION_TTL_SECONDS must be a positive integer")
 
+        def positive_int(variable_name: str, default: str) -> int:
+            raw = source.get(variable_name, default).strip()
+            try:
+                value = int(raw)
+            except ValueError as exc:
+                raise ConfigurationError(f"{variable_name} must be a positive integer") from exc
+            if value <= 0:
+                raise ConfigurationError(f"{variable_name} must be a positive integer")
+            return value
+
+        demo_raw = source.get("DEMO_MODE", "false").strip().lower()
+        if demo_raw not in {"true", "false"}:
+            raise ConfigurationError("DEMO_MODE must be true or false")
+
         return cls(
             localhost_cors_origins=_validate_local_origins(localhost_origins),
             s3_cors_origins=s3_origins,
             llm_adapter_name=adapter_name,
             session_ttl_seconds=session_ttl_seconds,
+            chat_total_timeout_seconds=positive_int("CHAT_TOTAL_TIMEOUT_SECONDS", "20"),
+            chat_rate_limit_per_minute=positive_int("CHAT_RATE_LIMIT_PER_MINUTE", "10"),
+            demo_mode=demo_raw == "true",
+            demo_cache_ttl_seconds=positive_int("DEMO_CACHE_TTL_SECONDS", "300"),
         )
 
     @property

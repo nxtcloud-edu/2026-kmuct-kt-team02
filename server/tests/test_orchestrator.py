@@ -212,8 +212,8 @@ def post_chat(client: TestClient, session_id: str):
         "/chat",
         json={
             "session_id": session_id,
-            "message": "제 상황에 맞는 정책을 알려줘",
             "client_message_id": "orchestrator-test-message",
+            "turn": {"type": "message", "message": "제 상황에 맞는 정책을 알려줘"},
         },
     )
 
@@ -228,8 +228,8 @@ def test_normal_flow_emits_initial_then_verified_updated_policies() -> None:
         {
             "conditions": [
                 {
-                    "summary": "중복 지원 확인",
-                    "result": "충족",
+                    "name": "중복 지원 확인",
+                    "result": "met",
                     "excerpt": EXCEPTION_EXCERPT,
                     "needed_field": None,
                 }
@@ -294,7 +294,8 @@ def test_conversation_housing_change_updates_session_before_rules() -> None:
     assert response.status_code == 200
     assert names.index("profile_update") < names.index("policies")
     update = payloads(events, "profile_update")[0]
-    assert update["changed_fields"] == {"housing_type": "monthly_rent"}
+    assert update["changes"][0]["field"] == "housing_type"
+    assert update["changes"][0]["after"] == "monthly_rent"
     assert rules.received_profiles[0].housing_type == "monthly_rent"
     assert store.get(session_id).profile.housing_type == "monthly_rent"
 
@@ -306,8 +307,8 @@ def test_failed_citation_is_unknown_and_never_reaches_answer_or_footnotes() -> N
         {
             "conditions": [
                 {
-                    "summary": "새로운 자격 조건",
-                    "result": "미충족",
+                    "name": "새로운 자격 조건",
+                    "result": "unmet",
                     "excerpt": hallucinated,
                     "needed_field": None,
                 }
@@ -340,8 +341,8 @@ def test_invalid_ai_json_is_downgraded_instead_of_trusted() -> None:
         {
             "conditions": [
                 {
-                    "summary": "중복 지원 확인",
-                    "result": "미충족",
+                    "name": "중복 지원 확인",
+                    "result": "unmet",
                     "excerpt": EXCEPTION_EXCERPT,
                     "needed_field": None,
                     "status": "unlikely",
@@ -388,3 +389,27 @@ def test_answer_timeout_keeps_policies_and_finishes_with_fixed_fallback() -> Non
     assert "policies" in names
     assert answer_text == "설명을 불러오지 못했어요. 카드에서 조건을 확인해 주세요."
     assert names[-1] == "done"
+
+
+def test_planned_change_emits_planned_basis_before_generic_followup() -> None:
+    llm = FakeLLMClient(
+        interpretation={
+            "intent": "find_policy",
+            "profile_changes": [
+                {"field": "status", "value": "on_leave", "timing": "planned"}
+            ],
+        }
+    )
+    client, store, _rules, session_id = build_client(
+        llm=llm,
+        judge=None,
+        source=policy_source(with_exception=False),
+    )
+
+    events = parse_sse(post_chat(client, session_id).text)
+    followup = payloads(events, "followup")[-1]
+    session = store.get(session_id)
+
+    assert followup["field"] == "planned_basis"
+    assert session.profile.status == "enrolled"
+    assert session.pending_planned_changes[0].field == "status"

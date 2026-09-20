@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from enum import StrEnum
-from typing import Any
+from typing import Any, Mapping
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -22,6 +22,9 @@ class ErrorCode(StrEnum):
     POLICY_NOT_FOUND = "policy_not_found"
     SERVER_ERROR = "server_error"
     ANSWER_FAILED = "answer_failed"
+    TIMEOUT = "timeout"
+    DUPLICATE_REQUEST = "duplicate_request"
+    RATE_LIMITED = "rate_limited"
 
 
 _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
@@ -30,6 +33,9 @@ _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.POLICY_NOT_FOUND: "정책을 찾을 수 없어요",
     ErrorCode.SERVER_ERROR: "잠시 문제가 생겼어요. 다시 시도해 주세요",
     ErrorCode.ANSWER_FAILED: "설명을 불러오지 못했어요. 카드에서 조건을 확인해 주세요",
+    ErrorCode.TIMEOUT: "응답이 오래 걸려 여기까지의 결과를 보여드려요.",
+    ErrorCode.DUPLICATE_REQUEST: "같은 요청을 이미 처리하고 있어요.",
+    ErrorCode.RATE_LIMITED: "요청이 많아요. 잠시 후 다시 시도해 주세요.",
 }
 
 
@@ -58,11 +64,13 @@ class AppError(Exception):
         code: ErrorCode,
         status_code: int,
         message: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(message or _DEFAULT_MESSAGES[code])
         self.code = code
         self.status_code = status_code
         self.message = message or _DEFAULT_MESSAGES[code]
+        self.headers = dict(headers or {})
 
 
 def _response(status_code: int, payload: ErrorPayload) -> JSONResponse:
@@ -71,9 +79,11 @@ def _response(status_code: int, payload: ErrorPayload) -> JSONResponse:
 
 
 async def app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
-    return _response(
-        exc.status_code,
-        ErrorPayload(code=exc.code, message=exc.message),
+    body = ErrorResponse(error=ErrorPayload(code=exc.code, message=exc.message))
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=body.model_dump(mode="json"),
+        headers=exc.headers,
     )
 
 

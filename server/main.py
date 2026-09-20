@@ -9,9 +9,11 @@ from server.ai_gateway import AIGateway
 from server.api import api_router
 from server.chat_service import ChatService
 from server.config import Settings
+from server.demo_cache import DemoEventCache
 from server.errors import install_error_handlers
 from server.policy_repository import PolicyRepository
 from server.rule_engine import RuleEngine
+from server.rate_limit import SessionRateLimiter
 from server.session_store import SessionStore
 
 
@@ -42,6 +44,14 @@ def create_app(
     application.state.session_store = resolved_session_store
     application.state.ai_gateway = ai_gateway
     application.state.chat_service = chat_service
+    application.state.chat_rate_limiter = SessionRateLimiter(
+        limit_per_minute=resolved_settings.chat_rate_limit_per_minute
+    )
+    application.state.demo_event_cache = (
+        DemoEventCache(ttl_seconds=resolved_settings.demo_cache_ttl_seconds)
+        if resolved_settings.demo_mode
+        else None
+    )
 
     application.add_middleware(
         CORSMiddleware,

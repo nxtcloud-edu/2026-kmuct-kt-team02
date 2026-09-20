@@ -208,6 +208,16 @@ class AskableProfileField(StrEnum):
     LAST_GPA = "last_gpa"
 
 
+class PlannedBasis(StrEnum):
+    """Which point in time a pending future change should be evaluated against."""
+
+    PLANNED = "planned"
+    CURRENT = "current"
+
+
+FollowupField = AskableProfileField | Literal["planned_basis"]
+
+
 class ProfilePatch(ContractModel):
     age: Age | None = None
     district: District | None = None
@@ -347,7 +357,7 @@ class FollowupOption(ContractModel):
 
 
 class FollowupQuestion(ContractModel):
-    field: AskableProfileField
+    field: FollowupField
     question: Annotated[str, Field(min_length=1)]
     reason: Annotated[str, Field(min_length=1)]
     options: list[FollowupOption]
@@ -363,10 +373,32 @@ class SessionCreateResponse(ContractModel):
     followup: FollowupQuestion | None = None
 
 
+class MessageTurn(ContractModel):
+    type: Literal["message"]
+    message: Annotated[str, Field(min_length=1)]
+
+
+class FollowupAnswerTurn(ContractModel):
+    type: Literal["followup_answer"]
+    field: FollowupField
+    value: JsonValue
+
+
+class FollowupSkipTurn(ContractModel):
+    type: Literal["followup_skip"]
+    field: FollowupField
+
+
+ChatTurn = Annotated[
+    MessageTurn | FollowupAnswerTurn | FollowupSkipTurn,
+    Field(discriminator="type"),
+]
+
+
 class ChatRequest(ContractModel):
     session_id: Annotated[str, Field(min_length=1)]
-    message: Annotated[str, Field(min_length=1)]
     client_message_id: Annotated[str, Field(min_length=1, max_length=128)]
+    turn: ChatTurn
 
 
 class PolicyDependencyStatus(StrEnum):
