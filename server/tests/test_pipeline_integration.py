@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from rules import repository
 from server.exception_judge import AiBExceptionJudgeAdapter
-from server.llm_client import ClaudeLLMClient, LLMConfig
+from server.llm_client import GatewayLLMClient
 from server.main import create_app
 from server.orchestrator import BackendBOrchestrator
 from server.session_store import SessionStore
@@ -25,33 +25,18 @@ POLICIES_PATH = "data/policies/policies.json"
 ANSWER_TEXT = "조건을 확인했어요. 자세한 내용은 카드를 봐 주세요."
 
 
-class Block:
-    def __init__(self, text: str) -> None:
-        self.text = text
-
-
-class Response:
-    def __init__(self, content: list[object]) -> None:
-        self.content = content
-
-
-class FakeMessages:
+class FakeGateway:
     """작업에 따라 다른 모양을 돌려준다. 구조화 호출은 JSON, 답변 호출은 문장."""
 
     def __init__(self) -> None:
         self.systems: list[str] = []
 
-    def create(self, **kwargs: object) -> Response:
+    def complete(self, **kwargs: object) -> str:
         system = str(kwargs.get("system", ""))
         self.systems.append(system)
         if "interpret_message" in system:
-            return Response([Block('{"intent": "find_policy"}')])
-        return Response([Block(ANSWER_TEXT)])
-
-
-class FakeSDK:
-    def __init__(self) -> None:
-        self.messages = FakeMessages()
+            return '{"intent": "find_policy"}'
+        return ANSWER_TEXT
 
 
 class FakeAiBJudge:
@@ -70,10 +55,7 @@ def build_client() -> tuple[TestClient, FakeAiBJudge]:
     sessions = SessionStore(ttl_seconds=1800)
     judge = FakeAiBJudge()
     orchestrator = BackendBOrchestrator(
-        llm_client=ClaudeLLMClient(
-            config=LLMConfig(api_key="key-not-real", model="claude-test"),
-            sdk=FakeSDK(),
-        ),
+        llm_client=GatewayLLMClient(FakeGateway()),
         rule_engine=rule_engine,
         policy_sources=store,
         exception_judge=AiBExceptionJudgeAdapter(judge),

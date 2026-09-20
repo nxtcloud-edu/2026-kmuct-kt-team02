@@ -38,6 +38,7 @@ import asyncio
 import logging
 from typing import Any
 
+from ai.gateway import GatewayClient
 from ai.judgment.judge import ExceptionJudge as AiBExceptionJudge
 from server.orchestrator import ExceptionJudgeRequest
 
@@ -118,8 +119,15 @@ class AiBExceptionJudgeAdapter:
         *,
         policy_budget: float = DEFAULT_POLICY_BUDGET_S,
     ) -> None:
-        # AI B 클라이언트는 키가 없어도 생성된다. 설정은 첫 호출 때 읽는다.
-        self._judge = judge if judge is not None else AiBExceptionJudge(
+        if judge is not None:
+            self._judge = judge
+            return
+        # 클라이언트를 반드시 명시한다. 생략하면 AI B 가 `ClaudeClient` 를 만들어
+        # api.anthropic.com 으로 직접 붙는다. 캠프가 주는 것은 OpenAI 호환
+        # 게이트웨이라(.env.example) 그 경로는 401 로 끝나고, 화면에서는 그 실패가
+        # "AI 가 고장났다"와 구별되지 않는다. 답변과 판정이 같은 게이트웨이를 써야 한다.
+        self._judge = AiBExceptionJudge(
+            GatewayClient(),
             policy_budget=policy_budget,
             batch_budget=policy_budget,
         )

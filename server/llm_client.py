@@ -1,31 +1,38 @@
-"""`server.orchestrator.LLMClient` 구현체 (Claude).
+"""`server.orchestrator.LLMClient` 구현체.
 
-`LLMClient` 는 프로토콜만 있고 구현체가 없었다. 그래서 `BackendBOrchestrator` 를
-조립할 수 없었고 `/chat` 은 어떤 경로로도 답변을 만들지 못했다. 이 파일이 그 자리를 채운다.
+`LLMClient` 는 프로토콜만 있고 구현체가 없었다. 그래서 `BackendBOrchestrator` 를 조립할 수
+없었고 `/chat` 은 어떤 경로로도 답변을 만들지 못했다. 이 파일이 그 자리를 채운다.
 
-## 설계 결정
+## 왜 `ai/gateway.py` 를 감싸는가
 
-**환경변수 이름을 AI B(`ai/judgment/client.py`)와 공유한다.** `CLAUDE_API_KEY`,
-`CLAUDE_MODEL` 을 그대로 읽는다. 서버용 변수를 따로 만들면 같은 키를 두 곳에 넣어야 하고,
-한쪽만 채운 상태로 배포되면 대화는 되는데 예외 판정만 조용히 실패한다. 설정 지점은 하나여야 한다.
+**캠프가 주는 것은 Anthropic 키가 아니라 OpenAI 호환 게이트웨이다** (`.env.example`).
+그래서 `anthropic.Anthropic(...)` 으로 직접 부르면 `api.anthropic.com` 을 때려 401 이 난다.
+화면에서는 그 실패가 "AI 가 고장났다"와 구별되지 않는다.
 
-**`anthropic` 은 호출 시점에 지연 import 한다.** 패키지가 없어도 이 모듈을 import 할 수
-있어야 서버 테스트가 SDK 설치 없이 돌아간다. AI B 가 같은 이유로 같은 선택을 했다.
+`ai/gateway.py` 의 `GatewayClient` 가 이미 그 게이트웨이를 상대한다. 기본 주소, 키 이름
+여러 개(`API_KEY`, `LLM_API_KEY`, `CLAUDE_API_KEY`, …), 모델 별칭, 오류 분류를 모두 들고
+있다. 여기서 설정을 다시 읽으면 환경변수 읽는 곳이 두 군데가 되고, 한쪽만 채운 상태로
+배포되면 대화는 되는데 예외 판정만 조용히 실패한다. **설정 지점은 하나여야 한다.**
 
-**`stream_text` 는 청크를 하나만 내보낸다.** 스트리밍 API 를 쓰지 않는다. 호출부
-(`BackendBOrchestrator._generate_answer`)가 `async for` 로 받은 청크를 **전부 모아서**
-`finalize_answer` 에 넘기기 때문이다. 즉 지금 구조에서는 토큰 단위로 받아도 사용자에게
-빨리 도달하지 않는다. 화면의 타이핑 효과는 `finalize_answer` 가 쪼갠 `answer_deltas` 가
-만든다. 실제 스트리밍이 이득이 되려면 오케스트레이터가 버퍼링을 멈춰야 하고, 그건 이
-파일이 아니라 그쪽에서 결정할 일이다. 없는 이득을 위해 스레드-큐 다리를 놓지 않는다.
+## 남은 두 가지 결정
 
-**동기 SDK 를 `asyncio.to_thread` 로 감싼다.** Claude 의 동기 클라이언트를 쓰되 이벤트
-루프를 막지 않는다. 비동기 클라이언트를 쓰지 않는 이유는 AI B 가 이미 동기 클라이언트를
-쓰고 있어 두 경로의 오류 처리를 같은 모양으로 유지하기 위해서다.
+**동기 호출을 `asyncio.to_thread` 로 감싼다.** `GatewayClient` 는 동기다. 이벤트 루프를
+막지 않으려면 스레드로 넘겨야 한다.
 
-**오류를 로그로 남긴다.** 호출부가 모든 예외를 삼키고 대체 문구로 넘어간다
-(`orchestrator.py` `_interpret`, `_generate_answer`). 로그가 없으면 운영자는 답변이
-왜 계속 대체 문구인지 알 수 없다.
+**`stream_text` 는 청크를 하나만 내보낸다.** `GatewayClient.stream` 이 실제 스트리밍을
+지원하지만 쓰지 않는다. 호출부(`BackendBOrchestrator._generate_answer`)가 `async for` 로
+받은 청크를 **전부 모은 뒤** `finalize_answer` 에 넘기기 때문이다. 즉 토큰 단위로 받아도
+사용자에게 더 빨리 도달하지 않는다. 화면의 타이핑 효과는 `finalize_answer` 가 문장 단위로
+쪼갠 `answer_deltas` 가 만든다. 실제 스트리밍이 이득이 되려면 오케스트레이터가 버퍼링을
+멈춰야 하고, 그건 이 파일이 아니라 그쪽에서 결정할 일이다. 없는 이득을 위해 동기 제너레이터를
+비동기로 잇는 다리를 놓지 않는다.
+
+## 키가 없을 때
+
+생성은 성공하고 호출만 실패한다. 키 없는 환경에서도 서버는 떠야 하고, AI 가 전부 실패해도
+규칙 기반 카드는 화면에 남아야 한다 (`docs/03-api-contract.md` 9장). 호출부가 예외를 삼켜
+대체 문구로 넘어가므로, 원인은 로그에만 남는다. 무엇이 없는지는 `missing_settings()` 가
+이름으로 알려준다.
 """
 
 from __future__ import annotations
@@ -33,99 +40,47 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
 
+from ai import gateway
+from ai.conversation import llm as conversation_llm
 from server.orchestrator import StructuredLLMRequest, TextLLMRequest
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_MAX_TOKENS = 1024
-DEFAULT_TEMPERATURE = 0.0
-DEFAULT_TIMEOUT_S = 12.0
+#: 구조화 호출과 답변 호출에 주는 시간. 오케스트레이터 제한보다 짧게 잡는다.
+#: (`OrchestratorTimeouts.interpretation_s` 3초, `answer_s` 15초)
+DEFAULT_STRUCTURED_TIMEOUT_S = 2.5
+DEFAULT_ANSWER_TIMEOUT_S = 12.0
 
 _JSON_SYSTEM_SUFFIX = (
     "\n\nJSON 객체 하나만 출력한다. 설명, 머리말, 코드 펜스를 붙이지 않는다."
 )
 
 
-class LLMConfigError(RuntimeError):
-    """키나 모델 이름이 없어 호출을 시작할 수 없다."""
+class LLMOutputError(RuntimeError):
+    """호출은 됐지만 쓸 수 있는 결과를 받지 못했다."""
 
 
-class LLMCallError(RuntimeError):
-    """호출은 했지만 쓸 수 있는 결과를 받지 못했다."""
+def missing_settings(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    """모델을 부르기 위해 아직 없는 설정 **이름만** 돌려준다.
 
-
-@dataclass(frozen=True, slots=True)
-class LLMConfig:
-    """호출에 필요한 값. 키는 로그와 `/health` 에 절대 싣지 않는다."""
-
-    api_key: str
-    model: str
-    max_tokens: int = DEFAULT_MAX_TOKENS
-    temperature: float = DEFAULT_TEMPERATURE
-
-    @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None) -> "LLMConfig":
-        source = os.environ if environ is None else environ
-        api_key = (
-            source.get("CLAUDE_API_KEY", "").strip()
-            or source.get("ANTHROPIC_API_KEY", "").strip()
-        )
-        if not api_key:
-            raise LLMConfigError("CLAUDE_API_KEY 또는 ANTHROPIC_API_KEY 가 필요합니다")
-
-        # 모델 이름에 기본값을 두지 않는다. 기본값을 두면 존재하지 않는 모델로
-        # 조용히 호출해 404 를 받고, 원인이 설정 누락임을 알아채기 어렵다.
-        model = source.get("CLAUDE_MODEL", "").strip()
-        if not model:
-            raise LLMConfigError("CLAUDE_MODEL 이 필요합니다")
-
-        return cls(
-            api_key=api_key,
-            model=model,
-            max_tokens=_positive_int(
-                source.get("CLAUDE_MAX_TOKENS"), DEFAULT_MAX_TOKENS, "CLAUDE_MAX_TOKENS"
-            ),
-            temperature=_temperature(source.get("CLAUDE_TEMPERATURE")),
-        )
-
-
-def _positive_int(raw: str | None, default: int, name: str) -> int:
-    if raw is None or not raw.strip():
-        return default
-    try:
-        value = int(raw.strip())
-    except ValueError as error:
-        raise LLMConfigError(f"{name} 는 정수여야 합니다") from error
-    if value <= 0:
-        raise LLMConfigError(f"{name} 는 1 이상이어야 합니다")
-    return value
-
-
-def _temperature(raw: str | None) -> float:
-    if raw is None or not raw.strip():
-        return DEFAULT_TEMPERATURE
-    try:
-        value = float(raw.strip())
-    except ValueError as error:
-        raise LLMConfigError("CLAUDE_TEMPERATURE 는 실수여야 합니다") from error
-    if not 0.0 <= value <= 1.0:
-        raise LLMConfigError("CLAUDE_TEMPERATURE 는 0.0 에서 1.0 사이여야 합니다")
-    return value
+    키를 넣었는데 답변이 계속 대체 문구인 상황에서 가장 먼저 볼 값이다.
+    값은 돌려주지 않는다. 로그나 `/health` 에 키가 새는 경로를 만들지 않는다.
+    """
+    return gateway.missing_settings(env)
 
 
 def extract_json_object(text: str) -> object:
     """모델 출력에서 JSON 객체를 꺼낸다.
 
     프롬프트로 "JSON 만" 지시해도 코드 펜스나 한 줄 설명이 섞여 오는 일이 있다.
-    호출부가 검증(`validate_ai_json`)을 하므로 여기서는 파싱까지만 책임진다.
+    게이트웨이가 구조화 출력을 지원하는지 대회 가이드에 없어서(`ai/gateway.py`
+    `complete` 독스트링) 스키마 강제를 걸 수 없고, 그래서 파싱이 방어선이다.
+    값 검증은 호출부의 `validate_ai_json` 이 엄격한 Pydantic 모델로 한다.
     """
     stripped = text.strip()
     if stripped.startswith("```"):
-        # ```json ... ``` 형태에서 첫 줄과 마지막 펜스를 떼어낸다
         without_open = stripped.split("\n", 1)[1] if "\n" in stripped else ""
         stripped = without_open.rsplit("```", 1)[0].strip()
 
@@ -137,73 +92,40 @@ def extract_json_object(text: str) -> object:
     start = stripped.find("{")
     end = stripped.rfind("}")
     if start == -1 or end <= start:
-        raise LLMCallError("모델 출력에서 JSON 객체를 찾지 못했습니다")
+        raise LLMOutputError("모델 출력에서 JSON 객체를 찾지 못했습니다")
     try:
         return json.loads(stripped[start : end + 1])
     except json.JSONDecodeError as error:
-        raise LLMCallError("모델 출력이 올바른 JSON 이 아닙니다") from error
+        raise LLMOutputError("모델 출력이 올바른 JSON 이 아닙니다") from error
 
 
-class ClaudeLLMClient:
-    """`server.orchestrator.LLMClient` 를 만족하는 Claude 클라이언트.
+class GatewayLLMClient:
+    """`server.orchestrator.LLMClient` 를 만족한다.
 
-    `sdk` 를 주입하면 실제 호출 없이 테스트할 수 있다. 주입한 객체는
-    `messages.create(...)` 를 제공해야 한다.
+    `client` 를 주입하면 실제 호출 없이 테스트할 수 있다. 주입한 객체는
+    `complete(system=, user=, timeout=, temperature=)` 를 제공해야 한다.
     """
 
     def __init__(
         self,
+        client: object | None = None,
         *,
-        config: LLMConfig | None = None,
-        sdk: object | None = None,
-        timeout_s: float = DEFAULT_TIMEOUT_S,
+        env: Mapping[str, str] | None = None,
+        structured_timeout_s: float = DEFAULT_STRUCTURED_TIMEOUT_S,
+        answer_timeout_s: float = DEFAULT_ANSWER_TIMEOUT_S,
     ) -> None:
-        if timeout_s <= 0:
-            raise ValueError("timeout_s 는 0 보다 커야 합니다")
-        self._config = config
-        self._sdk = sdk
-        self._timeout_s = timeout_s
-        self._lock = asyncio.Lock()
-
-    @property
-    def config(self) -> LLMConfig:
-        """설정을 처음 필요할 때 읽는다. 생성 시점에 키가 없어도 된다."""
-        if self._config is None:
-            self._config = LLMConfig.from_env()
-        return self._config
-
-    def _client(self) -> object:
-        if self._sdk is not None:
-            return self._sdk
-        try:
-            import anthropic  # 지연 import: 패키지가 없어도 이 모듈은 import 된다
-        except ImportError as error:
-            raise LLMConfigError(
-                "anthropic 패키지가 필요합니다. 'pip install anthropic' 으로 설치하세요"
-            ) from error
-        self._sdk = anthropic.Anthropic(api_key=self.config.api_key)
-        return self._sdk
-
-    def _complete_text(self, *, system: str, user: str) -> str:
-        """동기 호출 한 번. 스레드에서 실행된다."""
-        config = self.config
-        response = self._client().messages.create(
-            model=config.model,
-            max_tokens=config.max_tokens,
-            temperature=config.temperature,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-            timeout=self._timeout_s,
-        )
-        return _text_from_response(response)
+        if structured_timeout_s <= 0 or answer_timeout_s <= 0:
+            raise ValueError("타임아웃은 0 보다 커야 합니다")
+        # 설정을 읽지 못해도 생성은 성공한다. 부족하면 호출 시점에 LLMError 가 난다.
+        self._client = client if client is not None else gateway.GatewayClient(env=env)
+        # 실패를 기록할 때 같은 곳을 다시 본다. 여기서 실제 환경을 새로 읽으면
+        # 주입한 설정과 로그의 판단이 어긋나, 테스트가 개발자 로컬 환경에 따라 갈린다.
+        self._env = env
+        self._structured_timeout_s = structured_timeout_s
+        self._answer_timeout_s = answer_timeout_s
 
     async def complete_json(self, request: StructuredLLMRequest) -> object:
-        """구조화 출력. 검증하지 않은 값을 그대로 돌려준다.
-
-        `output_schema` 를 프롬프트에 넣어 형태를 유도하되 강제하지는 않는다.
-        Claude 메시지 API 에 스키마 강제가 없어서다. 형태 검증은 호출부의
-        `validate_ai_json` 이 엄격한 Pydantic 모델로 한다.
-        """
+        """구조화 출력. 검증하지 않은 값을 그대로 돌려준다."""
         system = (
             f"너는 {request.task.value} 작업을 수행한다. "
             f"아래 JSON Schema 를 만족하는 결과만 만든다.\n"
@@ -212,57 +134,62 @@ class ClaudeLLMClient:
         )
         user = json.dumps(request.input, ensure_ascii=False)
 
-        try:
-            text = await asyncio.to_thread(
-                self._complete_text, system=system, user=user
-            )
-        except Exception:
-            # 호출부가 예외를 삼키고 기본값으로 넘어간다. 원인은 로그에만 남는다.
-            _LOGGER.exception("complete_json 호출 실패: task=%s", request.task.value)
-            raise
+        text = await self._complete(
+            system=system,
+            user=user,
+            timeout=self._structured_timeout_s,
+            temperature=conversation_llm.TEMPERATURE_STRUCTURED,
+            task=request.task.value,
+        )
         return extract_json_object(text)
 
     async def stream_text(self, request: TextLLMRequest) -> AsyncIterator[str]:
         """답변 본문. 청크를 하나만 내보낸다 (모듈 문서화 참고)."""
-        try:
-            text = await asyncio.to_thread(
-                self._complete_text, system=request.system, user=request.user
-            )
-        except Exception:
-            _LOGGER.exception("stream_text 호출 실패: task=%s", request.task.value)
-            raise
+        text = await self._complete(
+            system=request.system,
+            user=request.user,
+            timeout=self._answer_timeout_s,
+            temperature=conversation_llm.TEMPERATURE_ANSWER,
+            task=request.task.value,
+        )
         if text:
             yield text
 
-
-def _text_from_response(response: object) -> str:
-    """응답에서 텍스트 블록만 이어 붙인다.
-
-    `content` 는 블록 리스트다. 도구 사용 블록 등 텍스트가 아닌 블록이 섞일 수 있어
-    `text` 속성이 있는 것만 고른다.
-    """
-    content = getattr(response, "content", None)
-    if content is None:
-        raise LLMCallError("모델 응답에 content 가 없습니다")
-
-    parts: list[str] = []
-    for block in content:
-        text = getattr(block, "text", None)
-        if text is None and isinstance(block, dict):
-            text = block.get("text")
-        if isinstance(text, str):
-            parts.append(text)
-
-    joined = "".join(parts).strip()
-    if not joined:
-        raise LLMCallError("모델 응답에 텍스트가 없습니다")
-    return joined
+    async def _complete(
+        self,
+        *,
+        system: str,
+        user: str,
+        timeout: float,
+        temperature: float,
+        task: str,
+    ) -> str:
+        try:
+            return await asyncio.to_thread(
+                self._client.complete,
+                system=system,
+                user=user,
+                timeout=timeout,
+                temperature=temperature,
+            )
+        except Exception:
+            # 호출부가 예외를 삼키고 기본값·대체 문구로 넘어간다. 로그가 없으면 운영자는
+            # 답변이 왜 계속 대체 문구인지 알 수 없다. 키 값은 남기지 않는다.
+            gaps = missing_settings(self._env)
+            if gaps:
+                # 설정 누락은 예상된 상태다. 매 턴 스택 트레이스를 찍으면 진짜 오류가
+                # 로그에 묻힌다. 무엇이 없는지 한 줄로 알린다.
+                _LOGGER.warning(
+                    "모델을 건너뜁니다: task=%s 없는 설정=%s", task, ", ".join(gaps)
+                )
+            else:
+                _LOGGER.exception("모델 호출 실패: task=%s", task)
+            raise
 
 
 __all__ = [
-    "ClaudeLLMClient",
-    "LLMCallError",
-    "LLMConfig",
-    "LLMConfigError",
+    "GatewayLLMClient",
+    "LLMOutputError",
     "extract_json_object",
+    "missing_settings",
 ]
