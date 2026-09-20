@@ -1,0 +1,119 @@
+{
+  "_meta": {
+    "작성일": "2026-09-20",
+    "작성자": "백엔드A",
+    "기준": "docs/01-glossary-profile.md 2~3장, server/schemas.py Profile",
+    "용도": "추천 정확도와 판정 일치율 채점 기준이면서 데모 리허설용. 채점 방법은 data/eval/README.md",
+    "region": "서울 고정이므로 전원 seoul이다. 클라이언트는 이 값을 전송하지 않고 서버가 채운다 (docs/01-glossary-profile.md 2장)",
+    "profile_객체_규약": "profile 안에는 Profile 계약 필드만 넣는다. extra=forbid라 id나 메모를 섞으면 검증이 실패한다. 그래서 id와 검증 목표는 형제 키로 뺐다",
+    "정답셋_분리": "기대 판정 결과는 이 파일에 두지 않는다. 백엔드A 로컬에만 두고 AI A·B에게 공개하지 않는다",
+    "P5_교체_사유": "원래 P5는 '만 21세, 서울 외'로 서울 한정 정책이 unlikely가 되는지 보는 케이스였다. region이 seoul 고정으로 확정돼 서울 외 프로필을 만들 수 없으므로 나이 하한 경계로 교체했다. 자치구 한정 정책이 데이터에 0건이라 자치구 불일치도 검증할 수 없다"
+  },
+  "profiles": [
+    {
+      "id": "P1",
+      "검증_목표": "데모 기본 경로. 소득 기준이 있는 정책에서 check와 조건부 문장이 나오는지. 재학생이라 미취업자 전용 정책은 신분 미충족으로 unlikely가 되는지",
+      "데모_프로필": true,
+      "profile": {
+        "age": 23,
+        "region": "seoul",
+        "district": null,
+        "status": "enrolled",
+        "categories": ["job", "living"],
+        "income_bracket": "unknown",
+        "housing_type": null,
+        "residence_period": null,
+        "remaining_semesters": null,
+        "job_seeking_period": null,
+        "employment_insurance": null,
+        "other_benefit": null,
+        "household_size": null,
+        "last_gpa": null
+      }
+    },
+    {
+      "id": "P2",
+      "검증_목표": "주거 형태 추가 항목이 이미 채워진 상태에서 주거 정책이 met으로 가는지. 소득 구간 50_100이 상한 100 정책에서 met, 상한 미만 정책에서 unmet이 되는지",
+      "데모_프로필": false,
+      "profile": {
+        "age": 22,
+        "region": "seoul",
+        "district": "성북구",
+        "status": "on_leave",
+        "categories": ["housing", "living"],
+        "income_bracket": "50_100",
+        "housing_type": "monthly_rent",
+        "residence_period": null,
+        "remaining_semesters": null,
+        "job_seeking_period": null,
+        "employment_insurance": null,
+        "other_benefit": null,
+        "household_size": null,
+        "last_gpa": null
+      }
+    },
+    {
+      "id": "P3",
+      "검증_목표": "신분이 판정에 반영되는지. final_semester 대상 정책이 met이 되고 재학 전용 정책이 unmet이 되는지. 마감 임박 정렬이 맞는지",
+      "데모_프로필": false,
+      "profile": {
+        "age": 24,
+        "region": "seoul",
+        "district": null,
+        "status": "final_semester",
+        "categories": ["job"],
+        "income_bracket": "100_150",
+        "housing_type": null,
+        "residence_period": null,
+        "remaining_semesters": null,
+        "job_seeking_period": null,
+        "employment_insurance": null,
+        "other_benefit": null,
+        "household_size": null,
+        "last_gpa": null
+      }
+    },
+    {
+      "id": "P4",
+      "검증_목표": "소득 미충족으로 unlikely가 나오고 미충족 이유와 대안이 제시되는지. over_150은 하한 150이라 상한 150 정책에서 unmet이 된다",
+      "데모_프로필": false,
+      "profile": {
+        "age": 23,
+        "region": "seoul",
+        "district": null,
+        "status": "enrolled",
+        "categories": ["living"],
+        "income_bracket": "over_150",
+        "housing_type": null,
+        "residence_period": null,
+        "remaining_semesters": null,
+        "job_seeking_period": null,
+        "employment_insurance": null,
+        "other_benefit": null,
+        "household_size": null,
+        "last_gpa": null
+      }
+    },
+    {
+      "id": "P5",
+      "검증_목표": "나이 하한 미달로 unmet이 되는지. 만 19세는 age_min 21 정책(문화패스)에서 unmet, age_min 19 정책(대중교통비)에서 met이다. categories가 all이라 전 분야가 후보로 들어오는지도 함께 본다",
+      "데모_프로필": false,
+      "profile": {
+        "age": 19,
+        "region": "seoul",
+        "district": null,
+        "status": "enrolled",
+        "categories": ["all"],
+        "income_bracket": "unknown",
+        "housing_type": null,
+        "residence_period": null,
+        "remaining_semesters": null,
+        "job_seeking_period": null,
+        "employment_insurance": null,
+        "other_benefit": null,
+        "household_size": null,
+        "last_gpa": null
+      }
+    }
+  ]
+}
