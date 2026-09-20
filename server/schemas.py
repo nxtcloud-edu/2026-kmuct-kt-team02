@@ -18,6 +18,7 @@ from pydantic import (
     HttpUrl,
     JsonValue,
     field_validator,
+    model_validator,
 )
 
 
@@ -148,7 +149,7 @@ class ProfileInput(ContractModel):
     """POST /session input; region is deliberately not client-provided."""
 
     age: Age
-    district: District | None = None
+    district: District
     status: UserStatus
     categories: CategorySelection
     income_bracket: IncomeBracket = IncomeBracket.UNKNOWN
@@ -228,6 +229,15 @@ class ProfilePatch(ContractModel):
         cls, categories: list[Category] | None
     ) -> list[Category] | None:
         return None if categories is None else _check_categories(categories)
+
+    @model_validator(mode="after")
+    def validate_explicit_values(self) -> "ProfilePatch":
+        if not self.model_fields_set:
+            raise ValueError("at least one profile field is required")
+        for field_name in ("age", "district", "status", "categories"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be null")
+        return self
 
 
 class PolicySourceKind(StrEnum):

@@ -12,6 +12,7 @@ from pydantic import Field, field_validator
 
 from server.schemas import (
     ContractModel,
+    Policy,
     PolicyDataStatus,
     PolicyEvaluation,
     Profile,
@@ -42,5 +43,9 @@ class RuleEngine(Protocol):
     """Minimal synchronous adapter implemented by backend A or a test fake."""
 
     def evaluate(self, profile: Profile, *, limit: int = 5) -> RuleEngineResult:
-        """Return up to ``limit`` pre-filtered, ordered policy evaluations."""
+        """Return up to ``limit`` pre-filtered, ordered recommendations."""
+        ...
+
+    def evaluate_policy(self, profile: Profile, policy: Policy) -> PolicyEvaluation:
+        """Evaluate one repository policy without recommendation-list filtering."""
         ...

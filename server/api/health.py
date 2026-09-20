@@ -2,26 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Protocol
-
 from fastapi import APIRouter, Request
 
+from server.policy_repository import PolicyRepository
 from server.schemas import HealthResponse, PolicyDependencyStatus
 
 router = APIRouter(tags=["operations"])
 
 
-class PolicyCatalog(Protocol):
-    """Minimal backend A boundary needed by the health endpoint."""
-
-    def count_verified(self) -> int:
-        """Return the number of manually verified policies."""
-        ...
-
-
 @router.get("/health", response_model=HealthResponse)
 def get_health(request: Request) -> HealthResponse:
-    catalog: PolicyCatalog | None = request.app.state.policy_catalog
+    catalog: PolicyRepository | None = request.app.state.policy_catalog
     if catalog is None:
         verified_policy_count = None
         policy_dependency = PolicyDependencyStatus.UNCONNECTED
